@@ -23,13 +23,14 @@ pub struct Config{
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseHold{pub button:String,pub x:f32,pub y:f32,#[serde(default="s5")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool}
 fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true}
+impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true}}}
 
 impl Config{
  pub fn validate(&self)->Result<(),Box<dyn Error>>{
   if self.display.width<=0||self.display.height<=0{return Err("invalid display size".into())}
   if self.display.width>16384||self.display.height>16384{return Err("display size is too large".into())}
   if let Some(j)=&self.joystick{
-   for k in [&j.up,&j.down,&j.left,&j.right]{crate::input::key_code(k)?}
+   for k in [&j.up,&j.down,&j.left,&j.right]{crate::input::key_code(k)?;}
    if !(0.0..=1.0).contains(&j.center_x)||!(0.0..=1.0).contains(&j.center_y)||j.radius<=0.0||j.radius>1.0{return Err("invalid joystick".into())}
    if j.slot>=16{return Err("joystick slot must be 0..15".into())}
   }
