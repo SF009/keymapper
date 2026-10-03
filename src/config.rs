@@ -55,6 +55,9 @@ impl Config{
   if let (Some(k),Some(m))=(&self.devices.keyboard,&self.devices.mouse){
    if !k.is_empty()&&!m.is_empty()&&k==m{return Err("keyboard and mouse cannot use the same evdev device".into())}
   }
+  if self.performance.mouse_lock&&!self.performance.grab{
+   return Err("mouse_lock requires performance.grab=true".into())
+  }
   if let Some(j)=&self.joystick{
    for k in [&j.up,&j.down,&j.left,&j.right]{crate::input::key_code(k)?;}
    if !(0.0..=1.0).contains(&j.center_x)||!(0.0..=1.0).contains(&j.center_y)||j.radius<=0.0||j.radius>1.0{return Err("invalid joystick".into())}
@@ -149,6 +152,14 @@ mod tests{
   });
   c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.8,y:.8,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("mouse conflict")));
+  assert!(c.validate().is_err());
+ }
+
+ #[test]
+ fn mouse_lock_requires_grab(){
+  let mut c=base();
+  c.performance.mouse_lock=true;
+  c.performance.grab=false;
   assert!(c.validate().is_err());
  }
 
