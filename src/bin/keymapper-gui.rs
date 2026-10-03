@@ -781,6 +781,30 @@ const USER_SERVICE:&str="waydroid-keymapper.service";
 fn user_bin_dir()->PathBuf{home_dir().join(".local/bin")}
 fn user_service_dir()->PathBuf{home_dir().join(".config/systemd/user")}
 fn daemon_install_path()->PathBuf{user_bin_dir().join("waydroid-keymapper")}
+fn gui_install_path()->PathBuf{user_bin_dir().join("keymapper-gui")}
+fn desktop_file_path()->PathBuf{home_dir().join(".local/share/applications/waydroid-keymapper.desktop")}
+
+fn install_user_executable(src:&Path,dst:&Path)->Result<(),String>{
+    if src.canonicalize().ok()==dst.canonicalize().ok(){return Ok(())}
+    let tmp=dst.with_extension("tmp");
+    fs::copy(src,&tmp).map_err(|e|format!("install {}: {e}",dst.display()))?;
+    let mut perms=fs::metadata(&tmp).map_err(|e|e.to_string())?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&tmp,perms).map_err(|e|e.to_string())?;
+    fs::rename(&tmp,dst).map_err(|e|format!("activate {}: {e}",dst.display()))?;
+    Ok(())
+}
+
+fn desktop_entry()->&'static str{r#"[Desktop Entry]
+Type=Application
+Name=Waydroid Keymapper
+Comment=Low-latency Waydroid keyboard and mouse profile editor
+Exec=%h/.local/bin/keymapper-gui
+Icon=input-gaming
+Terminal=false
+Categories=Utility;Game;
+Keywords=Waydroid;Android;Gaming;Keymapper;
+"#}
 
 fn daemon_source()->Option<PathBuf>{
     let exe=env::current_exe().ok();
@@ -819,18 +843,20 @@ fn install_runtime()->Result<(),String>{
 
     let dst=daemon_install_path();
     if let Some(src)=daemon_source(){
-        let same=src.canonicalize().ok()==dst.canonicalize().ok();
-        if !same{
-            let tmp=dst.with_extension("tmp");
-            fs::copy(&src,&tmp).map_err(|e|format!("install daemon: {e}"))?;
-            let mut perms=fs::metadata(&tmp).map_err(|e|e.to_string())?.permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&tmp,perms).map_err(|e|e.to_string())?;
-            fs::rename(&tmp,&dst).map_err(|e|format!("activate daemon: {e}"))?;
-        }
+        install_user_executable(&src,&dst)?;
     }else if !dst.is_file(){
         return Err("waydroid-keymapper binary not found next to the GUI or in ~/.local/bin".into())
     }
+
+    if let Ok(exe)=env::current_exe(){
+        if exe.is_file(){install_user_executable(&exe,&gui_install_path())?;}
+    }
+
+    if let Some(parent)=desktop_file_path().parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
+    let desktop=desktop_file_path();
+    let desktop_tmp=desktop.with_extension("desktop.tmp");
+    fs::write(&desktop_tmp,desktop_entry()).map_err(|e|format!("write desktop launcher: {e}"))?;
+    fs::rename(&desktop_tmp,&desktop).map_err(|e|format!("activate desktop launcher: {e}"))?;
 
     let unit=user_service_dir().join(USER_SERVICE);
     let tmp=unit.with_extension("tmp");
