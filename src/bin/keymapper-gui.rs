@@ -3,6 +3,7 @@
 #[path="../touch.rs"] mod touch;
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap};
+use gtk4::prelude::*;
 use gtk4::{
     cairo, gio, glib, gdk, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
     ComboBoxText, Dialog, DrawingArea, Entry, EventControllerKey, Frame, GestureClick, GestureDrag,
@@ -81,19 +82,19 @@ fn default_config()->Config{
         devices:Devices{keyboard:None,mouse:None},
         joystick:Some(Joystick{
             up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-            center_x:.15,center_y:.76,radius:.085,slot:0,
+            center_x:0.15,center_y:0.76,radius:0.085,slot:0,
         }),
         aim:Some(Aim{
-            button:"MOUSE_RIGHT".into(),center_x:.50,center_y:.50,sensitivity:2.,
+            button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
             slot:1,invert_y:false,
         }),
         taps:vec![
-            Tap{key:"SPACE".into(),x:.86,y:.86,slot:2},
-            Tap{key:"R".into(),x:.93,y:.18,slot:3},
+            Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
+            Tap{key:"R".into(),x:0.93,y:0.18,slot:3},
         ],
-        holds:vec![Hold{key:"F".into(),x:.78,y:.84,slot:4}],
+        holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
         mouse_taps:Vec::new(),
-        mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:.88,y:.78,slot:5}],
+        mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
         performance:Performance{grab:true,realtime:true},
     }
 }
@@ -187,12 +188,12 @@ fn set_selected_position(cfg:&mut Config,sel:BindingRef,x:f32,y:f32){
 
 fn marker_color(sel:BindingRef)->(f64,f64,f64){
     match sel{
-        BindingRef::Aim=>(1.,.30,.30),
-        BindingRef::Joystick=>(.30,1.,.50),
-        BindingRef::Tap(_)=>(1.,.80,.25),
-        BindingRef::Hold(_)=>(.40,.70,1.),
-        BindingRef::MouseTap(_)=>(.85,.55,1.),
-        BindingRef::MouseHold(_)=>(1.,.45,.80),
+        BindingRef::Aim=>(1.,0.30,0.30),
+        BindingRef::Joystick=>(0.30,1.,0.50),
+        BindingRef::Tap(_)=>(1.,0.80,0.25),
+        BindingRef::Hold(_)=>(0.40,0.70,1.),
+        BindingRef::MouseTap(_)=>(0.85,0.55,1.),
+        BindingRef::MouseHold(_)=>(1.,0.45,0.80),
     }
 }
 
@@ -220,7 +221,7 @@ fn all_selectable(cfg:&Config)->Vec<BindingRef>{
 
 fn nearest_binding(cfg:&Config,x:f32,y:f32)->Option<BindingRef>{
     let mut best=None;
-    let mut best_d=.045_f32;
+    let mut best_d=0.045_f32;
     for sel in all_selectable(cfg){
         if let Some((px,py))=selected_position(cfg,sel){
             let d=((px-x)*(px-x)+(py-y)*(py-y)).sqrt();
@@ -230,7 +231,7 @@ fn nearest_binding(cfg:&Config,x:f32,y:f32)->Option<BindingRef>{
     best
 }
 
-fn draw_canvas(ui_state:&Rc<RefCell<State>>,area:&DrawingArea,cr:&cairo::Context,w:i32,h:i32){
+fn draw_canvas(ui_state:&Rc<RefCell<State>>,_area:&DrawingArea,cr:&cairo::Context,w:i32,h:i32){
     let st=ui_state.borrow();
     let cfg=&st.cfg;
     let pad=16.;
@@ -242,12 +243,12 @@ fn draw_canvas(ui_state:&Rc<RefCell<State>>,area:&DrawingArea,cr:&cairo::Context
     let ox=(w as f64-vw)/2.;
     let oy=(h as f64-vh)/2.;
 
-    cr.set_source_rgb(.055,.065,.08);
+    cr.set_source_rgb(0.055,0.065,0.08);
     cr.rectangle(0.,0.,w as f64,h as f64); let _=cr.fill();
-    cr.set_source_rgb(.10,.115,.14);
+    cr.set_source_rgb(0.10,0.115,0.14);
     cr.rectangle(ox,oy,vw,vh); let _=cr.fill();
 
-    cr.set_source_rgb(.15,.17,.20);
+    cr.set_source_rgb(0.15,0.17,0.20);
     for n in 1..10{
         let gx=ox+vw*(n as f64/10.);
         let gy=oy+vh*(n as f64/10.);
@@ -261,20 +262,20 @@ fn draw_canvas(ui_state:&Rc<RefCell<State>>,area:&DrawingArea,cr:&cairo::Context
     if let Some(j)=&cfg.joystick{
         let (x,y)=p(j.center_x,j.center_y);
         let r=vw.min(vh)*j.radius as f64;
-        cr.set_source_rgba(.20,.95,.45,.16);
+        cr.set_source_rgba(0.20,0.95,0.45,0.16);
         cr.arc(x,y,r,0.,std::f64::consts::TAU);let _=cr.fill();
-        cr.set_source_rgb(.30,1.,.50);
+        cr.set_source_rgb(0.30,1.,0.50);
         cr.arc(x,y,r,0.,std::f64::consts::TAU);let _=cr.stroke();
         cr.arc(x,y,5.,0.,std::f64::consts::TAU);let _=cr.fill();
         cr.move_to(x+8.,y-8.);cr.show_text("WASD");
     }
 
-    let mut draw_marker=|sel:BindingRef,x:f32,y:f32,text:&str|{
+    let draw_marker=|sel:BindingRef,x:f32,y:f32,text:&str|{
         let (px,py)=p(x,y);
         let (r,g,b)=marker_color(sel);
         let selected=st.selected==Some(sel);
         let radius=if selected{13.}else{10.};
-        cr.set_source_rgba(r,g,b,.20);
+        cr.set_source_rgba(r,g,b,0.20);
         cr.arc(px,py,radius+6.,0.,std::f64::consts::TAU);let _=cr.fill();
         cr.set_source_rgb(r,g,b);
         cr.arc(px,py,radius,0.,std::f64::consts::TAU);let _=cr.fill();
@@ -292,7 +293,7 @@ fn draw_canvas(ui_state:&Rc<RefCell<State>>,area:&DrawingArea,cr:&cairo::Context
     for(i,x)in cfg.mouse_taps.iter().enumerate(){draw_marker(BindingRef::MouseTap(i),x.x,x.y,&format!("{} TAP",x.button));}
     for(i,x)in cfg.mouse_holds.iter().enumerate(){draw_marker(BindingRef::MouseHold(i),x.x,x.y,&format!("{} HOLD",x.button));}
 
-    cr.set_source_rgb(.60,.63,.68);
+    cr.set_source_rgb(0.60,0.63,0.68);
     cr.move_to(ox,oy+vh+22.);
     cr.show_text("Click a marker to select • drag to reposition • Save to persist");
 }
@@ -363,7 +364,7 @@ fn rebuild_bindings(ui:&Ui){
     }
     if let Some(j)=&cfg.joystick{
         let row=GtkBox::new(Orientation::Horizontal,6);
-        let text=Label::new(Some(&format!("🕹 JOYSTICK • WASD • {:.0}% {:.0}%",j.center_x*100.,j.center_y*100.)));
+        let text=Label::new(Some(&format!("🕹 JOYSTICK • WASD • {:0.0}% {:0.0}%",j.center_x*100.,j.center_y*100.)));
         text.set_halign(gtk4::Align::Start);text.set_hexpand(true);
         let edit=Button::with_label("Edit");
         let ui2=ui.clone();edit.connect_clicked(move |_|{select_binding(&ui2,BindingRef::Joystick);});
@@ -371,7 +372,7 @@ fn rebuild_bindings(ui:&Ui){
     }
     if let Some(a)=&cfg.aim{
         let row=GtkBox::new(Orientation::Horizontal,6);
-        let text=Label::new(Some(&format!("🎯 AIM • {} • {:.2}x",a.button,a.sensitivity)));
+        let text=Label::new(Some(&format!("🎯 AIM • {} • {:0.2}x",a.button,a.sensitivity)));
         text.set_halign(gtk4::Align::Start);text.set_hexpand(true);
         let edit=Button::with_label("Edit");
         let ui2=ui.clone();edit.connect_clicked(move |_|{select_binding(&ui2,BindingRef::Aim);});
@@ -483,7 +484,7 @@ fn open_binding_dialog_inner(ui:&Ui,existing:Option<BindingRef>,kind:EditType){
     let key_box=GtkBox::new(Orientation::Horizontal,5);key_box.append(&key_entry);key_box.append(&capture);
     grid.attach(&key_label,0,0,1,1);grid.attach(&key_box,1,0,1,1);
 
-    let x=make_spin(0.,1.,.01,3);let y=make_spin(0.,1.,.01,3);let slot=make_spin(0.,15.,1.,0);
+    let x=make_spin(0.,1.,0.01,3);let y=make_spin(0.,1.,0.01,3);let slot=make_spin(0.,15.,1.,0);
     grid.attach(&Label::new(Some("X")),0,1,1,1);grid.attach(&x,1,1,1,1);
     grid.attach(&Label::new(Some("Y")),0,2,1,1);grid.attach(&y,1,2,1,1);
     grid.attach(&Label::new(Some("Touch slot")),0,3,1,1);grid.attach(&slot,1,3,1,1);
@@ -761,13 +762,14 @@ fn build_ui(app:&Application){
     let keyboard=ComboBoxText::new();let mouse=ComboBoxText::new();
 
     let aim_enabled=CheckButton::with_label("Enable aim");
-    let aim_button=Entry::new();let aim_x=make_spin(0.,1.,.01,3);let aim_y=make_spin(0.,1.,.01,3);
-    let aim_sensitivity=make_spin(.01,20.,.05,2);let aim_slot=make_spin(0.,15.,1.,0);let aim_invert_y=CheckButton::with_label("Invert Y");
+    let aim_button=Entry::new();let aim_x=make_spin(0.,1.,0.01,3);let aim_y=make_spin(0.,1.,0.01,3);
+    let aim_sensitivity=make_spin(0.01,20.,0.05,2);let aim_slot=make_spin(0.,15.,1.,0);let aim_invert_y=CheckButton::with_label("Invert Y");
     let joy_enabled=CheckButton::with_label("Enable joystick");
     let joy_up=Entry::new();let joy_down=Entry::new();let joy_left=Entry::new();let joy_right=Entry::new();
-    let joy_x=make_spin(0.,1.,.01,3);let joy_y=make_spin(0.,1.,.01,3);let joy_radius=make_spin(.01,1.,.005,3);let joy_slot=make_spin(0.,15.,1.,0);
+    let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
 
+    let bindings_box=GtkBox::new(Orientation::Vertical,6);
     let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
@@ -785,7 +787,7 @@ fn build_ui(app:&Application){
     let addbar=GtkBox::new(Orientation::Horizontal,5);let addkey=Button::with_label("+ Key");let addmouse=Button::with_label("+ Mouse");
     addbar.append(&addkey);addbar.append(&addmouse);left.append(&addbar);
     let bindings_scroll=ScrolledWindow::new();bindings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
-    let bindings_box=GtkBox::new(Orientation::Vertical,6);bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(false);
+    bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(false);
     addbar.append(&Button::with_label("Bindings below"));
     left.append(&bindings_scroll);
 
