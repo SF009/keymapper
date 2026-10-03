@@ -46,6 +46,7 @@ struct Ui {
     mouse:ComboBoxText,
     aim_enabled:CheckButton,
     aim_button:Entry,
+    aim_mode:ComboBoxText,
     aim_x:SpinButton,
     aim_y:SpinButton,
     aim_sensitivity:SpinButton,
@@ -62,6 +63,8 @@ struct Ui {
     joy_slot:SpinButton,
     grab:CheckButton,
     realtime:CheckButton,
+    mouse_lock:CheckButton,
+    mouse_toggle:Entry,
 }
 
 fn home_dir()->PathBuf{
@@ -85,7 +88,7 @@ fn shooter_profile(base:&Config)->Config{
     });
     cfg.aim=Some(Aim{
         button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,
-        sensitivity:2.0,slot:1,invert_y:false,
+        sensitivity:2.0,slot:1,invert_y:false,mode:"touch".into(),
     });
     cfg
 }
@@ -114,6 +117,7 @@ fn preset_free_fire()->Config{
 fn preset_fps()->Config{
     let mut cfg=shooter_profile(&default_config());
     cfg.aim.as_mut().unwrap().sensitivity=2.2;
+    cfg.aim.as_mut().unwrap().mode="relative".into();
     cfg.taps=vec![
         Tap{key:"SPACE".into(),x:0.84,y:0.86,slot:2},
         Tap{key:"R".into(),x:0.93,y:0.18,slot:3},
@@ -194,7 +198,7 @@ fn default_config()->Config{
         holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
         mouse_taps:Vec::new(),
         mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
-        performance:Performance{grab:true,realtime:true},
+        performance:Performance{grab:true,realtime:true,mouse_lock:true,mouse_toggle_key:"F8".into()},
     }
 }
 
@@ -471,7 +475,7 @@ fn rebuild_bindings(ui:&Ui){
     }
     if let Some(a)=&cfg.aim{
         let row=GtkBox::new(Orientation::Horizontal,6);
-        let text=Label::new(Some(&format!("🎯 AIM • {} • {:0.2}x",a.button,a.sensitivity)));
+        let text=Label::new(Some(&format!("🎯 AIM • {} • {} • {:0.2}x",a.button,a.mode,a.sensitivity)));
         text.set_halign(gtk4::Align::Start);text.set_hexpand(true);
         let edit=Button::with_label("Edit");
         let ui2=ui.clone();edit.connect_clicked(move |_|{select_binding(&ui2,BindingRef::Aim);});
@@ -653,6 +657,7 @@ fn sync_form(ui:&Ui){
     ui.aim_enabled.set_active(st.cfg.aim.is_some());
     if let Some(a)=&st.cfg.aim{
         ui.aim_button.set_text(&a.button);
+        ui.aim_mode.set_active_id(Some(a.mode.as_str()));
         ui.aim_x.set_value(a.center_x as f64);ui.aim_y.set_value(a.center_y as f64);
         ui.aim_sensitivity.set_value(a.sensitivity as f64);ui.aim_slot.set_value(a.slot as f64);
         ui.aim_invert_y.set_active(a.invert_y);
@@ -665,6 +670,8 @@ fn sync_form(ui:&Ui){
     }
     ui.grab.set_active(st.cfg.performance.grab);
     ui.realtime.set_active(st.cfg.performance.realtime);
+    ui.mouse_lock.set_active(st.cfg.performance.mouse_lock);
+    ui.mouse_toggle.set_text(&st.cfg.performance.mouse_toggle_key);
     fill_devices(&ui.keyboard,&st.cfg.devices.keyboard,false);
     fill_devices(&ui.mouse,&st.cfg.devices.mouse,true);
 }
@@ -677,6 +684,8 @@ fn sync_state_from_form(ui:&Ui){
     st.cfg.devices.mouse=ui.mouse.active_id().map(|x|x.to_string());
     st.cfg.performance.grab=ui.grab.is_active();
     st.cfg.performance.realtime=ui.realtime.is_active();
+    st.cfg.performance.mouse_lock=ui.mouse_lock.is_active();
+    st.cfg.performance.mouse_toggle_key=ui.mouse_toggle.text().trim().to_string();
 
     if ui.aim_enabled.is_active(){
         st.cfg.aim=Some(Aim{
@@ -684,6 +693,7 @@ fn sync_state_from_form(ui:&Ui){
             center_x:ui.aim_x.value() as f32,center_y:ui.aim_y.value() as f32,
             sensitivity:ui.aim_sensitivity.value() as f32,slot:ui.aim_slot.value() as u8,
             invert_y:ui.aim_invert_y.is_active(),
+            mode:ui.aim_mode.active_id().map(|x|x.to_string()).unwrap_or_else(||"touch".into()),
         });
     }else{st.cfg.aim=None;}
 
@@ -842,6 +852,11 @@ fn delete_profile(ui:&Ui){
 fn validate_current(ui:&Ui){
     sync_state_from_form(ui);
     let st=ui.state.borrow();
+    let conflicts=st.cfg.conflicts();
+    if !conflicts.is_empty(){
+        set_status(ui,&format!("{} input conflict(s): {}",conflicts.len(),conflicts.join(" | ")));
+        return;
+    }
     match st.cfg.validate(){Ok(())=>set_status(ui,"Configuration is valid ✓"),Err(e)=>set_status(ui,&format!("Validation error: {e}"))}
 }
 
@@ -862,15 +877,18 @@ fn build_ui(app:&Application){
     let keyboard=ComboBoxText::new();let mouse=ComboBoxText::new();
 
     let aim_enabled=CheckButton::with_label("Enable aim");
-    let aim_button=Entry::new();let aim_x=make_spin(0.,1.,0.01,3);let aim_y=make_spin(0.,1.,0.01,3);
+    let aim_button=Entry::new();
+    let aim_mode=ComboBoxText::new();aim_mode.append(Some("touch"),"Touch / absolute");aim_mode.append(Some("relative"),"Relative / FPS");let aim_x=make_spin(0.,1.,0.01,3);let aim_y=make_spin(0.,1.,0.01,3);
     let aim_sensitivity=make_spin(0.01,20.,0.05,2);let aim_slot=make_spin(0.,15.,1.,0);let aim_invert_y=CheckButton::with_label("Invert Y");
     let joy_enabled=CheckButton::with_label("Enable joystick");
     let joy_up=Entry::new();let joy_down=Entry::new();let joy_left=Entry::new();let joy_right=Entry::new();
     let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
+    let mouse_lock=CheckButton::with_label("Lock mouse on start");
+    let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
 
     let bindings_box=GtkBox::new(Orientation::Vertical,6);
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone(),mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -919,9 +937,9 @@ fn build_ui(app:&Application){
     let aim=add_section(&right,"Aim");
     aim.append(&aim_enabled);
     let ag=Grid::new();ag.set_row_spacing(7);ag.set_column_spacing(8);
-    form_row(&ag,0,"Button",&aim_button);form_row(&ag,1,"Center X",&aim_x);form_row(&ag,2,"Center Y",&aim_y);
-    form_row(&ag,3,"Sensitivity",&aim_sensitivity);form_row(&ag,4,"Slot",&aim_slot);
-    ag.attach(&aim_invert_y,1,5,1,1);aim.append(&ag);
+    form_row(&ag,0,"Button",&aim_button);form_row(&ag,1,"Mode",&aim_mode);form_row(&ag,2,"Center X",&aim_x);form_row(&ag,3,"Center Y",&aim_y);
+    form_row(&ag,4,"Sensitivity",&aim_sensitivity);form_row(&ag,5,"Slot",&aim_slot);
+    ag.attach(&aim_invert_y,1,6,1,1);aim.append(&ag);
 
     let joystick=add_section(&right,"Joystick");
     joystick.append(&joy_enabled);
@@ -930,7 +948,8 @@ fn build_ui(app:&Application){
     form_row(&jg,4,"Center X",&joy_x);form_row(&jg,5,"Center Y",&joy_y);form_row(&jg,6,"Radius",&joy_radius);form_row(&jg,7,"Slot",&joy_slot);
     joystick.append(&jg);
 
-    let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);
+    let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);
+    let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);form_row(&mg,0,"Lock toggle key",&mouse_toggle);perf.append(&mg);
     let help=Label::new(Some("Drag any marker in the preview. Coordinates are normalized 0..1.\\nSlots must be unique at runtime. The GUI never runs in the input hot path."));
     help.set_wrap(true);help.set_halign(gtk4::Align::Start);perf.append(&help);
 
