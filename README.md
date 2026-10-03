@@ -131,7 +131,7 @@ Do not run the daemon as root when the udev input permissions are configured.
 
 Two aim paths are available. `mode="touch"` keeps a virtual multitouch finger and is the compatibility path for touch-first shooters such as Free Fire. `mode="relative"` emits relative `REL_X/REL_Y` motion through Waydroid's pointer input FIFO, avoiding the old edge-recenter jump and keeping the host pointer captured while aiming.
 
-Waydroid's modern hardware composer also has an Android pointer-capture path that uses Wayland pointer constraints and a relative-pointer interface. citeturn474808search1 The direct FIFO relative backend here is intentionally separate from that Android API, so support should be tested against the exact Waydroid image/vendor in use.
+Waydroid's modern hardware composer also has an Android pointer-capture path that uses Wayland pointer constraints and a relative-pointer interface. The direct FIFO relative backend here is intentionally separate from that Android API, so support should be tested against the exact Waydroid image/vendor in use.
 
 ## Performance design
 
