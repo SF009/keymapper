@@ -8,6 +8,10 @@ use std::{env,error::Error,fs,sync::{Arc,Mutex},thread,time::Duration};
 use touch::Mapper;
 
 fn main()->Result<(),Box<dyn Error>>{
+ // Waydroid's FIFO reader can disappear during a restart. Ignore SIGPIPE so
+ // the mapper receives EPIPE and can reconnect instead of being terminated.
+ unsafe{libc::signal(libc::SIGPIPE,libc::SIG_IGN);}
+
  let mut a=env::args().skip(1);
  let cmd=a.next().unwrap_or_else(||"run".into());
  let path=a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into()))));
