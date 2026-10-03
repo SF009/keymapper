@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config,Joystick},
+    config::Config,
     input::{button_code,key_code,KeyAction,MouseAction},
 };
 use std::{
@@ -412,6 +412,7 @@ impl Mapper{
  
 #[cfg(test)]
 mod tests{
+    use evdev::KeyCode;
     use super::*;
     use crate::config::{Config,Display,Devices,Aim,Performance};
 
