@@ -1050,9 +1050,13 @@ fn build_ui(app:&Application){
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
     let mouse_lock=CheckButton::with_label("Lock mouse on start");
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
+    let runtime_status=Label::new(Some("Service: Not installed"));
+    let lock_status=Label::new(Some("Mouse: offline"));
+    runtime_status.set_halign(gtk4::Align::Start);
+    lock_status.set_halign(gtk4::Align::Start);
 
     let bindings_box=GtkBox::new(Orientation::Vertical,6);
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone(),mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -1119,9 +1123,33 @@ fn build_ui(app:&Application){
     joystick.append(&jg);
 
     let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);
-    let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);form_row(&mg,0,"Lock toggle key",&mouse_toggle);perf.append(&mg);
-    let help=Label::new(Some("Drag any marker in the preview. Coordinates are normalized 0..1.\\nSlots must be unique at runtime. The GUI never runs in the input hot path."));
+    let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);
+    let toggle_box=GtkBox::new(Orientation::Horizontal,5);
+    let capture_toggle=Button::with_label("Capture");
+    toggle_box.append(&mouse_toggle);toggle_box.append(&capture_toggle);
+    form_row(&mg,0,"Lock toggle key",&toggle_box);perf.append(&mg);
+    let help=Label::new(Some("The toggle key is reserved for mouse capture and cannot also be a gameplay binding."));
     help.set_wrap(true);help.set_halign(gtk4::Align::Start);perf.append(&help);
+
+    let runtime=add_section(&right,"Runtime");
+    runtime.append(&runtime_status);runtime.append(&lock_status);
+    let rb1=GtkBox::new(Orientation::Horizontal,5);
+    let install_btn=Button::with_label("Install / Repair");
+    let start_btn=Button::with_label("Start");
+    let stop_btn=Button::with_label("Stop");
+    let restart_btn=Button::with_label("Restart");
+    rb1.append(&install_btn);rb1.append(&start_btn);rb1.append(&stop_btn);rb1.append(&restart_btn);runtime.append(&rb1);
+    let rb2=GtkBox::new(Orientation::Horizontal,5);
+    let lock_btn=Button::with_label("🔒 Lock");
+    let unlock_btn=Button::with_label("🖱 Unlock");
+    let toggle_btn=Button::with_label("Toggle");
+    rb2.append(&lock_btn);rb2.append(&unlock_btn);rb2.append(&toggle_btn);runtime.append(&rb2);
+    let waydroid_state_label=Label::new(Some(&format!("Waydroid: {}",waydroid_state())));
+    waydroid_state_label.set_halign(gtk4::Align::Start);runtime.append(&waydroid_state_label);
+    let wb=GtkBox::new(Orientation::Horizontal,5);
+    let waydroid_start=Button::with_label("Start Waydroid");
+    let waydroid_stop=Button::with_label("Stop Waydroid");
+    wb.append(&waydroid_start);wb.append(&waydroid_stop);runtime.append(&wb);
 
     paned.set_start_child(Some(&left));paned.set_resize_start_child(true);paned.set_shrink_start_child(false);
     paned.set_end_child(Some(&center));paned.set_resize_end_child(true);
@@ -1205,6 +1233,45 @@ fn build_ui(app:&Application){
     }
     rebuild_bindings(&ui);sync_form(&ui);
     if let Some(row)=profile_list.selected_row(){row.grab_focus();}
+
+    attach_key_capture(&mouse_toggle,&capture_toggle,&status);
+
+    let ui2=ui.clone();install_btn.connect_clicked(move |_|{
+        match install_runtime(){Ok(())=>set_status(&ui2,"Runtime installed/repaired ✓"),Err(e)=>set_status(&ui2,&format!("Runtime setup failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();start_btn.connect_clicked(move |_|{
+        match service_action("start"){Ok(_)=>set_status(&ui2,"Daemon service started ✓"),Err(e)=>set_status(&ui2,&format!("Start failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();stop_btn.connect_clicked(move |_|{
+        match service_action("stop"){Ok(_)=>set_status(&ui2,"Daemon service stopped"),Err(e)=>set_status(&ui2,&format!("Stop failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();restart_btn.connect_clicked(move |_|{
+        match service_action("restart"){Ok(_)=>set_status(&ui2,"Daemon service restarted ✓"),Err(e)=>set_status(&ui2,&format!("Restart failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();lock_btn.connect_clicked(move |_|runtime_control(&ui2,"lock"));
+    let ui2=ui.clone();unlock_btn.connect_clicked(move |_|runtime_control(&ui2,"unlock"));
+    let ui2=ui.clone();toggle_btn.connect_clicked(move |_|runtime_control(&ui2,"toggle"));
+    let ui2=ui.clone();waydroid_start.connect_clicked(move |_|waydroid_action(&ui2,"start"));
+    let ui2=ui.clone();waydroid_stop.connect_clicked(move |_|waydroid_action(&ui2,"stop"));
+
+    {
+        let ui2=ui.clone();
+        glib::timeout_add_local(Duration::from_millis(700),move||{
+            update_runtime_status(&ui2);
+            glib::ControlFlow::Continue
+        });
+    }
+    {
+        let label=waydroid_state_label.clone();
+        glib::timeout_add_local(Duration::from_secs(2),move||{
+            label.set_text(&format!("Waydroid: {}",waydroid_state()));
+            glib::ControlFlow::Continue
+        });
+    }
 
     let ui2=ui.clone();let win_new=app_window.clone();
     new_btn.connect_clicked(move |_|new_profile(&ui2,&win_new));
