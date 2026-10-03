@@ -22,7 +22,7 @@ impl Pipe{
 #[derive(Clone,Copy)]struct C{down:bool}
 pub struct Mapper{cfg:Arc<Config>,pipe:Pipe,slots:[C;16],next:i32,mx:f32,my:f32,aim:bool,keys:[bool;512]}
 impl Mapper{
- pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{let mut p=Pipe::new(cfg.touch_fifo());let _=p.connect();Ok(Self{cfg:Arc::new(cfg),pipe:p,slots:[C{down:false};16],next:1,mx:.5,my:.5,aim:false,keys:[false;512]})}
+ pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{let mut p=Pipe::new(cfg.touch_fifo());let _=p.connect();Ok(Self{cfg:Arc::new(cfg),pipe:p,slots:[C{down:false};16],next:1,mx:0.5,my:0.5,aim:false,keys:[false;512]})}
  pub fn config(&self)->&Config{&self.cfg}
  fn out(&mut self,e:&[(u16,u16,i32)]){if self.pipe.f.is_none(){let _=self.pipe.connect()}let _=self.pipe.send(e)}
  fn xy(&self,x:f32,y:f32)->(i32,i32){((x.clamp(0.,1.)*(self.cfg.display.width-1)as f32).round()as i32,(y.clamp(0.,1.)*(self.cfg.display.height-1)as f32).round()as i32)}
@@ -36,11 +36,11 @@ impl Mapper{
   for h in self.cfg.holds.clone(){if key_code(&h.key).ok()==Some(c){if v==1{self.down(h.slot,h.x,h.y)}else if v==0{self.up(h.slot)}return}}
  }
  fn pressed(&self,s:&str)->bool{key_code(s).ok().and_then(|k|self.keys.get(k as usize).copied()).unwrap_or(false)}
- fn joy(&mut self,j:Joystick){let mut dx=0.;let mut dy=0.;if self.pressed(&j.left){dx-=1.}if self.pressed(&j.right){dx+=1.}if self.pressed(&j.up){dy-=1.}if self.pressed(&j.down){dy+=1.}let l=(dx*dx+dy*dy).sqrt();if l>1.{dx/=l;dy/=l}let x=j.center_x+dx*j.radius;let y=j.center_y+dy*j.radius;if l==0.{self.up(j.slot)}else if self.slots[j.slot as usize].down{self.mv(j.slot,x,y)}else{self.down(j.slot,x,y)}}
+ fn joy(&mut self,j:Joystick){let mut dx=0.0f32;let mut dy=0.0f32;if self.pressed(&j.left){dx-=1.}if self.pressed(&j.right){dx+=1.}if self.pressed(&j.up){dy-=1.}if self.pressed(&j.down){dy+=1.}let l=(dx*dx+dy*dy).sqrt();if l>1.{dx/=l;dy/=l}let x=j.center_x+dx*j.radius;let y=j.center_y+dy*j.radius;if l==0.{self.up(j.slot)}else if self.slots[j.slot as usize].down{self.mv(j.slot,x,y)}else{self.down(j.slot,x,y)}}
  pub fn button(&mut self,c:u16,v:i32){
   if let Some(a)=self.cfg.aim.clone(){if button_code(&a.button).ok()==Some(c){self.aim=v!=0;if self.aim{self.mx=a.center_x;self.my=a.center_y;self.down(a.slot,self.mx,self.my)}else{self.up(a.slot)}}}
   for t in self.cfg.mouse_taps.clone(){if button_code(&t.button).ok()==Some(c)&&v==1{self.down(t.slot,t.x,t.y);self.up(t.slot);return}}
   for h in self.cfg.mouse_holds.clone(){if button_code(&h.button).ok()==Some(c){if v==1{self.down(h.slot,h.x,h.y)}else if v==0{self.up(h.slot)}return}}
  }
- pub fn mouse(&mut self,dx:i32,dy:i32){let Some(a)=self.cfg.aim.clone()else{return};if !self.aim{return}self.mx+=dx as f32*a.sensitivity/self.cfg.display.width as f32;let sy=if a.invert_y{-1.}else{1.};self.my+=dy as f32*a.sensitivity*sy/self.cfg.display.height as f32;if self.mx<.08||self.mx>.92{self.mx=.5}if self.my<.08||self.my>.92{self.my=.5}self.mv(a.slot,self.mx,self.my)}
+ pub fn mouse(&mut self,dx:i32,dy:i32){let Some(a)=self.cfg.aim.clone()else{return};if !self.aim{return}self.mx+=dx as f32*a.sensitivity/self.cfg.display.width as f32;let sy=if a.invert_y{-1.}else{1.};self.my+=dy as f32*a.sensitivity*sy/self.cfg.display.height as f32;if self.mx<0.08||self.mx>0.92{self.mx=0.5}if self.my<0.08||self.my>0.92{self.my=0.5}self.mv(a.slot,self.mx,self.my)}
 }
