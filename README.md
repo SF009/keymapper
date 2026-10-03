@@ -84,7 +84,7 @@ The GTK4 GUI is the primary management interface. It creates the first profile a
 The project also ships a native GTK4 profile editor:
 
     cargo build --release --bin keymapper-gui
-    install -Dm755 target/release/keymapper-gui ~/.local/bin/waydroid-keymapper-gui
+    install -Dm755 target/release/keymapper-gui ~/.local/bin/keymapper-gui
     install -Dm644 data/waydroid-keymapper.desktop ~/.local/share/applications/waydroid-keymapper.desktop
     update-desktop-database ~/.local/share/applications 2>/dev/null || true
 
