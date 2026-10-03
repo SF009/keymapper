@@ -92,3 +92,68 @@ impl Config{
   c.iter().find(|p|Path::new(p).exists()).map(|p|p.to_string()).unwrap_or_else(||c[0].into())
  }
 }
+
+
+#[cfg(test)]
+mod tests{
+ use super::*;
+
+ fn base()->Config{
+  Config{
+   display:Display{width:1920,height:1080},
+   devices:Devices{keyboard:None,mouse:None},
+   joystick:None,aim:None,
+   taps:Vec::new(),holds:Vec::new(),mouse_taps:Vec::new(),mouse_holds:Vec::new(),
+   performance:Performance::default(),
+  }
+ }
+
+ #[test]
+ fn default_performance_is_shooter_safe(){
+  let p=Performance::default();
+  assert!(p.grab&&p.realtime&&p.mouse_lock);
+  assert_eq!(p.mouse_toggle_key,"F8");
+ }
+
+ #[test]
+ fn relative_aim_is_valid(){
+  let mut c=base();
+  c.aim=Some(Aim{
+   button:"MOUSE_RIGHT".into(),center_x:.5,center_y:.5,sensitivity:2.,
+   slot:1,invert_y:false,mode:"relative".into(),
+  });
+  assert!(c.validate().is_ok());
+ }
+
+ #[test]
+ fn duplicate_physical_keyboard_input_is_rejected(){
+  let mut c=base();
+  c.joystick=Some(Joystick{
+   up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+   center_x:.15,center_y:.76,radius:.085,slot:0,
+  });
+  c.holds.push(Hold{key:"W".into(),x:.3,y:.3,slot:2});
+  assert!(c.conflicts().iter().any(|x|x.contains("keyboard conflict")));
+  assert!(c.validate().is_err());
+ }
+
+ #[test]
+ fn aim_and_fire_button_conflict_is_rejected(){
+  let mut c=base();
+  c.aim=Some(Aim{
+   button:"MOUSE_LEFT".into(),center_x:.5,center_y:.5,sensitivity:2.,
+   slot:1,invert_y:false,mode:"touch".into(),
+  });
+  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.8,y:.8,slot:2});
+  assert!(c.conflicts().iter().any(|x|x.contains("mouse conflict")));
+  assert!(c.validate().is_err());
+ }
+
+ #[test]
+ fn unique_slots_are_accepted(){
+  let mut c=base();
+  c.taps.push(Tap{key:"SPACE".into(),x:.8,y:.8,slot:2});
+  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.9,y:.8,slot:3});
+  assert!(c.validate().is_ok());
+ }
+}
