@@ -1,4 +1,5 @@
 mod config;
+mod control;
 mod input;
 mod touch;
 
