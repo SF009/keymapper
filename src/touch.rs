@@ -1,46 +1,339 @@
-use crate::{config::{Config,Joystick},input::{button_code,key_code}};
-use std::{error::Error,io::{self,Write},os::fd::FromRawFd,sync::Arc};
+use crate::{
+    config::{Config,Joystick},
+    input::{button_code,key_code,KeyAction,MouseAction},
+};
+use std::{
+    error::Error,
+    io::{self,Write},
+    os::fd::FromRawFd,
+    sync::Arc,
+};
 
-const SYN:u16=0;const KEY:u16=1;const ABS:u16=3;const BTN_TOUCH:u16=330;const SLOT:u16=47;const MAJOR:u16=48;const MINOR:u16=49;const X:u16=53;const Y:u16=54;const ID:u16=57;const PRESS:u16=58;
-#[repr(C)]#[derive(Clone,Copy)]struct E{i64a:i64,i64b:i64,t:u16,c:u16,v:i32}
-struct Pipe{p:String,f:Option<std::fs::File>}
-impl Pipe{
- fn new(p:String)->Self{Self{p,f:None}}
- fn connect(&mut self)->io::Result<()>{
-  if self.f.is_some(){return Ok(())}let c=std::ffi::CString::new(self.p.as_str()).unwrap();
-  let fd=unsafe{libc::open(c.as_ptr(),libc::O_WRONLY|libc::O_NONBLOCK|libc::O_CLOEXEC)};if fd<0{return Err(io::Error::last_os_error())}
-  self.f=Some(unsafe{std::fs::File::from_raw_fd(fd)});Ok(())
- }
- fn send(&mut self,es:&[(u16,u16,i32)])->io::Result<()>{
-  let Some(f)=self.f.as_mut()else{return Ok(())};
-  let mut buf=Vec::with_capacity(es.len()*std::mem::size_of::<E>());
-  for&(t,c,v)in es{let e=E{i64a:0,i64b:0,t,c,v};let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,std::mem::size_of::<E>())};buf.extend_from_slice(b)}
-  if let Err(x)=f.write_all(&buf){self.f=None;return Err(x)}
-  Ok(())
- }
+const SYN:u16=0;
+const KEY:u16=1;
+const REL:u16=2;
+const ABS:u16=3;
+const BTN_TOUCH:u16=330;
+const REL_X:u16=0;
+const REL_Y:u16=1;
+const SLOT:u16=47;
+const MAJOR:u16=48;
+const MINOR:u16=49;
+const X:u16=53;
+const Y:u16=54;
+const ID:u16=57;
+const PRESS:u16=58;
+const MAX_INPUT_CODE:usize=1024;
+
+#[repr(C)]
+#[derive(Clone,Copy)]
+struct E{
+    i64a:i64,
+    i64b:i64,
+    t:u16,
+    c:u16,
+    v:i32,
 }
-#[derive(Clone,Copy)]struct C{down:bool}
-pub struct Mapper{cfg:Arc<Config>,pipe:Pipe,slots:[C;16],next:i32,mx:f32,my:f32,aim:bool,keys:[bool;512]}
+
+struct Pipe{
+    p:String,
+    f:Option<std::fs::File>,
+}
+impl Pipe{
+    fn new(p:String)->Self{Self{p,f:None}}
+    fn connect(&mut self)->io::Result<()>{
+        if self.f.is_some(){return Ok(())}
+        let c=std::ffi::CString::new(self.p.as_str()).map_err(|_|io::Error::new(io::ErrorKind::InvalidInput,"invalid FIFO path"))?;
+        let fd=unsafe{libc::open(c.as_ptr(),libc::O_WRONLY|libc::O_NONBLOCK|libc::O_CLOEXEC)};
+        if fd<0{return Err(io::Error::last_os_error())}
+        self.f=Some(unsafe{std::fs::File::from_raw_fd(fd)});
+        Ok(())
+    }
+    fn send(&mut self,es:&[(u16,u16,i32)]){
+        if self.f.is_none()&&self.connect().is_err(){return}
+        let Some(f)=self.f.as_mut()else{return};
+        let mut buf=[0u8;1024];
+        let size=std::mem::size_of::<E>();
+        let need=es.len().saturating_mul(size);
+        if need>buf.len(){
+            let mut v=Vec::with_capacity(need);
+            for &(t,c,value) in es{
+                let e=E{i64a:0,i64b:0,t,c,v:value};
+                let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
+                v.extend_from_slice(b);
+            }
+            if f.write_all(&v).is_err(){self.f=None;}
+            return;
+        }
+        let mut used=0usize;
+        for &(t,c,value) in es{
+            let e=E{i64a:0,i64b:0,t,c,v:value};
+            let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
+            buf[used..used+size].copy_from_slice(b);
+            used+=size;
+        }
+        if f.write_all(&buf[..used]).is_err(){self.f=None;}
+    }
+}
+
+#[derive(Clone,Copy)]
+struct C{down:bool}
+
+#[derive(Clone,Copy)]
+struct JoyRuntime{
+    up:u16,
+    down:u16,
+    left:u16,
+    right:u16,
+    center_x:f32,
+    center_y:f32,
+    radius:f32,
+    slot:u8,
+}
+
+#[derive(Clone,Copy)]
+struct AimRuntime{
+    button:u16,
+    center_x:f32,
+    center_y:f32,
+    sensitivity:f32,
+    slot:u8,
+    invert_y:bool,
+    relative:bool,
+}
+
+pub struct Mapper{
+    cfg:Arc<Config>,
+    touch:Pipe,
+    pointer:Pipe,
+    slots:[C;16],
+    next:i32,
+    mx:f32,
+    my:f32,
+    aim:bool,
+    mouse_locked:bool,
+    keys:[bool;MAX_INPUT_CODE],
+    key_actions:Box<[Option<KeyAction>]>,
+    mouse_actions:Box<[Option<MouseAction>]>,
+    joystick:Option<JoyRuntime>,
+    aim_cfg:Option<AimRuntime>,
+    mouse_hold_slots:[bool;16],
+}
+
 impl Mapper{
- pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{let mut p=Pipe::new(cfg.touch_fifo());let _=p.connect();Ok(Self{cfg:Arc::new(cfg),pipe:p,slots:[C{down:false};16],next:1,mx:0.5,my:0.5,aim:false,keys:[false;512]})}
- pub fn config(&self)->&Config{&self.cfg}
- fn out(&mut self,e:&[(u16,u16,i32)]){if self.pipe.f.is_none(){let _=self.pipe.connect();}let _=self.pipe.send(e);}
- fn xy(&self,x:f32,y:f32)->(i32,i32){((x.clamp(0.,1.)*(self.cfg.display.width-1)as f32).round()as i32,(y.clamp(0.,1.)*(self.cfg.display.height-1)as f32).round()as i32)}
- fn down(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16{return}let(x,y)=self.xy(x,y);let id=self.next;self.next=self.next.wrapping_add(1);self.slots[i]=C{down:true};self.out(&[(ABS,SLOT,s as i32),(ABS,ID,id),(ABS,X,x),(ABS,Y,y),(ABS,MAJOR,8),(ABS,MINOR,8),(ABS,PRESS,80),(KEY,BTN_TOUCH,1),(SYN,0,0)])}
- fn mv(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16||!self.slots[i].down{return}let(x,y)=self.xy(x,y);self.out(&[(ABS,SLOT,s as i32),(ABS,X,x),(ABS,Y,y),(ABS,PRESS,80),(SYN,0,0)])}
- fn any_down(&self)->bool{self.slots.iter().any(|c|c.down)}
- fn up(&mut self,s:u8){let i=s as usize;if i>=16||!self.slots[i].down{return}self.slots[i].down=false;let last=!self.any_down();let mut e=vec![(ABS,SLOT,s as i32),(ABS,ID,-1),(ABS,PRESS,0)];if last{e.push((KEY,BTN_TOUCH,0))}e.push((SYN,0,0));self.out(&e)}
- pub fn key(&mut self,c:u16,v:i32){if let Some(x)=self.keys.get_mut(c as usize){*x=v!=0}
-  if let Some(j)=self.cfg.joystick.clone(){if [key_code(&j.up),key_code(&j.down),key_code(&j.left),key_code(&j.right)].iter().flatten().any(|&x|x==c){self.joy(j);return}}
-  for t in self.cfg.taps.clone(){if key_code(&t.key).ok()==Some(c)&&v==1{self.down(t.slot,t.x,t.y);self.up(t.slot);return}}
-  for h in self.cfg.holds.clone(){if key_code(&h.key).ok()==Some(c){if v==1{self.down(h.slot,h.x,h.y)}else if v==0{self.up(h.slot)}return}}
- }
- fn pressed(&self,s:&str)->bool{key_code(s).ok().and_then(|k|self.keys.get(k as usize).copied()).unwrap_or(false)}
- fn joy(&mut self,j:Joystick){let mut dx=0.0f32;let mut dy=0.0f32;if self.pressed(&j.left){dx-=1.}if self.pressed(&j.right){dx+=1.}if self.pressed(&j.up){dy-=1.}if self.pressed(&j.down){dy+=1.}let l=(dx*dx+dy*dy).sqrt();if l>1.{dx/=l;dy/=l}let x=j.center_x+dx*j.radius;let y=j.center_y+dy*j.radius;if l==0.{self.up(j.slot)}else if self.slots[j.slot as usize].down{self.mv(j.slot,x,y)}else{self.down(j.slot,x,y)}}
- pub fn button(&mut self,c:u16,v:i32){
-  if let Some(a)=self.cfg.aim.clone(){if button_code(&a.button).ok()==Some(c){self.aim=v!=0;if self.aim{self.mx=a.center_x;self.my=a.center_y;self.down(a.slot,self.mx,self.my)}else{self.up(a.slot)}}}
-  for t in self.cfg.mouse_taps.clone(){if button_code(&t.button).ok()==Some(c)&&v==1{self.down(t.slot,t.x,t.y);self.up(t.slot);return}}
-  for h in self.cfg.mouse_holds.clone(){if button_code(&h.button).ok()==Some(c){if v==1{self.down(h.slot,h.x,h.y)}else if v==0{self.up(h.slot)}return}}
- }
- pub fn mouse(&mut self,dx:i32,dy:i32){let Some(a)=self.cfg.aim.clone()else{return};if !self.aim{return}self.mx+=dx as f32*a.sensitivity/self.cfg.display.width as f32;let sy=if a.invert_y{-1.}else{1.};self.my+=dy as f32*a.sensitivity*sy/self.cfg.display.height as f32;if self.mx<0.08||self.mx>0.92{self.mx=0.5}if self.my<0.08||self.my>0.92{self.my=0.5}self.mv(a.slot,self.mx,self.my)}
+    pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{
+        cfg.validate()?;
+        let mut key_actions=vec![None;MAX_INPUT_CODE];
+        let mut mouse_actions=vec![None;MAX_INPUT_CODE];
+
+        let joystick=cfg.joystick.as_ref().map(|j|{
+            let up=key_code(&j.up).unwrap();
+            let down=key_code(&j.down).unwrap();
+            let left=key_code(&j.left).unwrap();
+            let right=key_code(&j.right).unwrap();
+            key_actions[up as usize]=Some(KeyAction::Joystick);
+            key_actions[down as usize]=Some(KeyAction::Joystick);
+            key_actions[left as usize]=Some(KeyAction::Joystick);
+            key_actions[right as usize]=Some(KeyAction::Joystick);
+            JoyRuntime{up,down,left,right,center_x:j.center_x,center_y:j.center_y,radius:j.radius,slot:j.slot}
+        });
+
+        let aim_cfg=cfg.aim.as_ref().map(|a|{
+            let button=button_code(&a.button).unwrap();
+            mouse_actions[button as usize]=Some(MouseAction::Aim);
+            AimRuntime{
+                button,center_x:a.center_x,center_y:a.center_y,
+                sensitivity:a.sensitivity,slot:a.slot,invert_y:a.invert_y,
+                relative:a.mode.eq_ignore_ascii_case("relative"),
+            }
+        });
+
+        for x in &cfg.taps{
+            key_actions[key_code(&x.key).unwrap() as usize]=Some(KeyAction::Tap{slot:x.slot,x:x.x,y:x.y});
+        }
+        for x in &cfg.holds{
+            key_actions[key_code(&x.key).unwrap() as usize]=Some(KeyAction::Hold{slot:x.slot,x:x.x,y:x.y});
+        }
+        for x in &cfg.mouse_taps{
+            mouse_actions[button_code(&x.button).unwrap() as usize]=Some(MouseAction::Tap{slot:x.slot,x:x.x,y:x.y});
+        }
+        for x in &cfg.mouse_holds{
+            mouse_actions[button_code(&x.button).unwrap() as usize]=Some(MouseAction::Hold{slot:x.slot,x:x.x,y:x.y});
+        }
+
+        let mut mouse_hold_slots=[false;16];
+        for x in &cfg.mouse_holds{mouse_hold_slots[x.slot as usize]=true;}
+
+        let mouse_locked=cfg.performance.mouse_lock;
+        Ok(Self{
+            touch:Pipe::new(cfg.touch_fifo()),
+            pointer:Pipe::new(cfg.pointer_fifo()),
+            cfg:Arc::new(cfg),
+            slots:[C{down:false};16],
+            next:1,
+            mx:0.5,my:0.5,aim:false,mouse_locked,
+            keys:[false;MAX_INPUT_CODE],
+            key_actions:key_actions.into_boxed_slice(),
+            mouse_actions:mouse_actions.into_boxed_slice(),
+            joystick,aim_cfg,mouse_hold_slots,
+        })
+    }
+
+    pub fn config(&self)->&Config{&self.cfg}
+
+    pub fn set_mouse_lock(&mut self,locked:bool){
+        if self.mouse_locked==locked{return}
+        self.mouse_locked=locked;
+        if !locked{self.release_mouse_inputs();}
+    }
+
+    fn out_touch(&mut self,e:&[(u16,u16,i32)]){self.touch.send(e);}
+    fn out_pointer(&mut self,e:&[(u16,u16,i32)]){self.pointer.send(e);}
+
+    fn xy(&self,x:f32,y:f32)->(i32,i32){
+        (
+            (x.clamp(0.,1.)*(self.cfg.display.width-1)as f32).round()as i32,
+            (y.clamp(0.,1.)*(self.cfg.display.height-1)as f32).round()as i32,
+        )
+    }
+
+    fn down(&mut self,s:u8,x:f32,y:f32){
+        let i=s as usize;
+        if i>=16||self.slots[i].down{return}
+        let first=!self.any_down();
+        let(x,y)=self.xy(x,y);
+        let id=self.next;
+        self.next=self.next.wrapping_add(1);
+        self.slots[i]=C{down:true};
+        let mut e=vec![
+            (ABS,SLOT,s as i32),
+            (ABS,ID,id),
+            (ABS,X,x),
+            (ABS,Y,y),
+            (ABS,MAJOR,8),
+            (ABS,MINOR,8),
+            (ABS,PRESS,80),
+        ];
+        if first{e.push((KEY,BTN_TOUCH,1))}
+        e.push((SYN,0,0));
+        self.out_touch(&e);
+    }
+
+    fn mv(&mut self,s:u8,x:f32,y:f32){
+        let i=s as usize;
+        if i>=16||!self.slots[i].down{return}
+        let(x,y)=self.xy(x,y);
+        self.out_touch(&[(ABS,SLOT,s as i32),(ABS,X,x),(ABS,Y,y),(ABS,PRESS,80),(SYN,0,0)]);
+    }
+
+    fn any_down(&self)->bool{self.slots.iter().any(|c|c.down)}
+
+    fn up(&mut self,s:u8){
+        let i=s as usize;
+        if i>=16||!self.slots[i].down{return}
+        self.slots[i]=C{down:false};
+        let last=!self.any_down();
+        let mut e=vec![(ABS,SLOT,s as i32),(ABS,ID,-1),(ABS,PRESS,0)];
+        if last{e.push((KEY,BTN_TOUCH,0))}
+        e.push((SYN,0,0));
+        self.out_touch(&e);
+    }
+
+    pub fn key(&mut self,c:u16,v:i32){
+        let i=c as usize;
+        if i>=MAX_INPUT_CODE{return}
+        self.keys[i]=v!=0;
+        let Some(action)=self.key_actions[i]else{return};
+        match action{
+            KeyAction::Joystick=>self.joy(),
+            KeyAction::Tap{slot,x,y}=>if v==1{self.down(slot,x,y);self.up(slot)},
+            KeyAction::Hold{slot,x,y}=>{
+                if v==1{self.down(slot,x,y)}else if v==0{self.up(slot)}
+            }
+        }
+    }
+
+    fn pressed(&self,c:u16)->bool{self.keys.get(c as usize).copied().unwrap_or(false)}
+
+    fn joy(&mut self){
+        let Some(j)=self.joystick else{return};
+        let mut dx=0.0f32;
+        let mut dy=0.0f32;
+        if self.pressed(j.left){dx-=1.}
+        if self.pressed(j.right){dx+=1.}
+        if self.pressed(j.up){dy-=1.}
+        if self.pressed(j.down){dy+=1.}
+        let l=(dx*dx+dy*dy).sqrt();
+        if l>1.{dx/=l;dy/=l}
+        let x=j.center_x+dx*j.radius;
+        let y=j.center_y+dy*j.radius;
+        if l==0.{self.up(j.slot)}
+        else if self.slots[j.slot as usize].down{self.mv(j.slot,x,y)}
+        else{self.down(j.slot,x,y)}
+    }
+
+    pub fn button(&mut self,c:u16,v:i32){
+        let Some(action)=self.mouse_actions.get(c as usize).copied().flatten()else{return};
+        match action{
+            MouseAction::Aim=>{
+                if v==1&&!self.aim{
+                    self.aim=true;
+                    if let Some(a)=self.aim_cfg{
+                        self.mx=a.center_x;self.my=a.center_y;
+                        if !a.relative{self.down(a.slot,self.mx,self.my);}
+                    }
+                }else if v==0&&self.aim{
+                    self.aim=false;
+                    if let Some(a)=self.aim_cfg{
+                        if !a.relative{self.up(a.slot);}
+                    }
+                }
+            }
+            MouseAction::Tap{slot,x,y}=>if v==1{self.down(slot,x,y);self.up(slot)},
+            MouseAction::Hold{slot,x,y}=>{
+                if v==1{self.down(slot,x,y)}
+                else if v==0{self.up(slot)}
+            }
+        }
+    }
+
+    pub fn mouse(&mut self,dx:i32,dy:i32){
+        if !self.mouse_locked||!self.aim{return}
+        let Some(a)=self.aim_cfg else{return};
+
+        if a.relative{
+            if dx==0&&dy==0{return}
+            let sx=(dx as f32*a.sensitivity).round() as i32;
+            let sy=(dy as f32*a.sensitivity*(if a.invert_y{-1.}else{1.})).round() as i32;
+            if sx==0&&sy==0{return}
+            let mut e=[(REL,REL_X,0),(REL,REL_Y,0),(SYN,0,0)];
+            let mut n=1usize;
+            if sx!=0{e[0]=(REL,REL_X,sx);}else{e[0]=e[1];n=1;}
+            if sy!=0{
+                if sx==0{e[0]=(REL,REL_Y,sy);n=1;}
+                else{e[1]=(REL,REL_Y,sy);n=2;}
+            }
+            if sx==0&&sy==0{return}
+            e[n]=(SYN,0,0);self.out_pointer(&e[..=n]);
+            return;
+        }
+
+        self.mx+=(dx as f32*a.sensitivity)/self.cfg.display.width as f32;
+        let sy=if a.invert_y{-1.}else{1.};
+        self.my+=(dy as f32*a.sensitivity*sy)/self.cfg.display.height as f32;
+
+        // Keep the virtual touch near the center. This remains bounded by the
+        // Android touch protocol; relative mode above is the true unbounded path.
+        if self.mx<0.12||self.mx>0.88{self.mx=a.center_x;}
+        if self.my<0.12||self.my>0.88{self.my=a.center_y;}
+        self.mv(a.slot,self.mx,self.my);
+    }
+
+    fn release_mouse_inputs(&mut self){
+        self.aim=false;
+        if let Some(a)=self.aim_cfg{if !a.relative{self.up(a.slot);}}
+        for slot in 0..16{
+            if self.mouse_hold_slots[slot]{self.up(slot as u8);}
+        }
+    }
 }
