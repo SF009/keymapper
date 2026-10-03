@@ -189,7 +189,7 @@ fn default_config()->Config{
         }),
         aim:Some(Aim{
             button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
-            slot:1,invert_y:false,
+            slot:1,invert_y:false,mode:"touch".into(),
         }),
         taps:vec![
             Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
