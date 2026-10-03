@@ -76,6 +76,105 @@ fn active_config_path()->PathBuf{
     home_dir().join(".config/waydroid-keymapper/config.toml")
 }
 
+
+fn shooter_profile(base:&Config)->Config{
+    let mut cfg=base.clone();
+    cfg.joystick=Some(Joystick{
+        up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+        center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+    });
+    cfg.aim=Some(Aim{
+        button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,
+        sensitivity:2.0,slot:1,invert_y:false,
+    });
+    cfg
+}
+
+fn preset_free_fire()->Config{
+    let mut cfg=shooter_profile(&default_config());
+    cfg.taps=vec![
+        Tap{key:"SPACE".into(),x:0.84,y:0.86,slot:2}, // jump
+        Tap{key:"R".into(),x:0.93,y:0.18,slot:3},     // reload
+        Tap{key:"1".into(),x:0.72,y:0.18,slot:4},     // primary weapon
+        Tap{key:"2".into(),x:0.78,y:0.18,slot:5},     // secondary weapon
+        Tap{key:"G".into(),x:0.58,y:0.18,slot:6},     // grenade
+    ];
+    cfg.holds=vec![
+        Hold{key:"F".into(),x:0.76,y:0.83,slot:7},   // interact
+        Hold{key:"SHIFT".into(),x:0.28,y:0.76,slot:8},// sprint
+        Hold{key:"C".into(),x:0.34,y:0.88,slot:9},   // crouch
+    ];
+    cfg.mouse_taps=Vec::new();
+    cfg.mouse_holds=vec![
+        MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:10}, // fire
+    ];
+    cfg
+}
+
+fn preset_fps()->Config{
+    let mut cfg=shooter_profile(&default_config());
+    cfg.aim.as_mut().unwrap().sensitivity=2.2;
+    cfg.taps=vec![
+        Tap{key:"SPACE".into(),x:0.84,y:0.86,slot:2},
+        Tap{key:"R".into(),x:0.93,y:0.18,slot:3},
+        Tap{key:"1".into(),x:0.72,y:0.18,slot:4},
+        Tap{key:"2".into(),x:0.78,y:0.18,slot:5},
+        Tap{key:"G".into(),x:0.58,y:0.18,slot:6},
+        Tap{key:"Q".into(),x:0.47,y:0.18,slot:7},
+    ];
+    cfg.holds=vec![
+        Hold{key:"SHIFT".into(),x:0.28,y:0.76,slot:8},
+        Hold{key:"CTRL".into(),x:0.34,y:0.88,slot:9},
+        Hold{key:"F".into(),x:0.76,y:0.83,slot:10},
+    ];
+    cfg.mouse_taps=Vec::new();
+    cfg.mouse_holds=vec![
+        MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:11},
+    ];
+    cfg
+}
+
+fn preset_minimal()->Config{
+    let mut cfg=shooter_profile(&default_config());
+    cfg.taps=vec![
+        Tap{key:"SPACE".into(),x:0.84,y:0.86,slot:2},
+        Tap{key:"R".into(),x:0.93,y:0.18,slot:3},
+    ];
+    cfg.holds=vec![
+        Hold{key:"SHIFT".into(),x:0.28,y:0.76,slot:4},
+        Hold{key:"F".into(),x:0.76,y:0.83,slot:5},
+    ];
+    cfg.mouse_taps=Vec::new();
+    cfg.mouse_holds=vec![
+        MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:6},
+    ];
+    cfg
+}
+
+#[derive(Clone,Copy)]
+enum ShooterPreset{FreeFire,Fps,Minimal}
+
+fn apply_preset(ui:&Ui,preset:ShooterPreset){
+    let cfg=match preset{
+        ShooterPreset::FreeFire=>preset_free_fire(),
+        ShooterPreset::Fps=>preset_fps(),
+        ShooterPreset::Minimal=>preset_minimal(),
+    };
+    let mut st=ui.state.borrow_mut();
+    st.cfg=cfg;
+    st.selected=None;
+    st.dirty=true;
+    drop(st);
+    sync_form(ui);
+    rebuild_bindings(ui);
+    ui.canvas.queue_draw();
+    set_status(ui,match preset{
+        ShooterPreset::FreeFire=>"Free Fire preset loaded — drag controls and Save",
+        ShooterPreset::Fps=>"FPS/BR Shooter preset loaded — drag controls and Save",
+        ShooterPreset::Minimal=>"Minimal Shooter preset loaded — drag controls and Save",
+    });
+}
+
 fn default_config()->Config{
     Config{
         display:Display{width:1920,height:1080},
@@ -775,7 +874,7 @@ fn build_ui(app:&Application){
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
-    let title=Label::new(Some("Waydroid Keymapper"));title.add_css_class("title-2");title.set_hexpand(true);title.set_halign(gtk4::Align::Start);
+    let title=Label::new(Some("Waydroid Keymapper • Shooter Control Editor"));title.add_css_class("title-2");title.set_hexpand(true);title.set_halign(gtk4::Align::Start);
     let new_btn=Button::with_label("New");let dup_btn=Button::with_label("Duplicate");let del_btn=Button::with_label("Delete");
     let validate=Button::with_label("Validate");let save=Button::with_label("Save");let apply=Button::with_label("Apply & Run");
     header.append(&title);header.append(&new_btn);header.append(&dup_btn);header.append(&del_btn);header.append(&validate);header.append(&save);header.append(&apply);
@@ -796,6 +895,16 @@ fn build_ui(app:&Application){
     let right=GtkBox::new(Orientation::Vertical,4);add_margins(&right,8);
     let settings_scroll=ScrolledWindow::new();settings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
     settings_scroll.set_child(Some(&right));settings_scroll.set_vexpand(true);settings_scroll.set_min_content_width(340);
+
+    let presets=add_section(&right,"Shooter Presets");
+    let preset_help=Label::new(Some("Optimized starting layouts for Free Fire and FPS/BR games. Coordinates are intentionally editable."));
+    preset_help.set_wrap(true);preset_help.set_halign(gtk4::Align::Start);presets.append(&preset_help);
+    let preset_bar=GtkBox::new(Orientation::Horizontal,5);
+    let free_fire_btn=Button::with_label("Free Fire");
+    let fps_btn=Button::with_label("FPS / BR");
+    let minimal_btn=Button::with_label("Minimal");
+    preset_bar.append(&free_fire_btn);preset_bar.append(&fps_btn);preset_bar.append(&minimal_btn);
+    presets.append(&preset_bar);
 
     let general=add_section(&right,"Profile / Display");
     let g=Grid::new();g.set_row_spacing(7);g.set_column_spacing(8);
