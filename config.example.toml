@@ -45,3 +45,10 @@ slot=4
 [performance]
 grab=true
 realtime=true
+
+
+[[mouse_holds]]
+button="MOUSE_LEFT"
+x=0.88
+y=0.78
+slot=5
