@@ -16,9 +16,11 @@ use std::{
     env,
     error::Error,
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path,PathBuf},
     process::Command,
     rc::Rc,
+    time::Duration,
 };
 
 const APP_ID:&str="io.sf009.WaydroidKeymapper";
@@ -66,6 +68,8 @@ struct Ui {
     realtime:CheckButton,
     mouse_lock:CheckButton,
     mouse_toggle:Entry,
+    runtime_status:Label,
+    lock_status:Label,
 }
 
 fn home_dir()->PathBuf{
