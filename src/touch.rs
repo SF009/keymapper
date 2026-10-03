@@ -409,3 +409,52 @@ impl Mapper{
         self.rel_acc_y=0.0;
     }
 }
+
+ 
+#[cfg(test)]
+mod tests{
+    use super::*;
+    use crate::config::{Config,Display,Devices,Aim,Performance};
+
+    fn cfg()->Config{
+        Config{
+            display:Display{width:1920,height:1080},
+            devices:Devices{keyboard:None,mouse:None},
+            joystick:None,
+            aim:Some(Aim{
+                button:"MOUSE_RIGHT".into(),center_x:.5,center_y:.5,
+                sensitivity:.5,slot:1,invert_y:false,mode:"relative".into(),
+            }),
+            taps:vec![],holds:vec![],mouse_taps:vec![],mouse_holds:vec![],
+            performance:Performance::default(),
+        }
+    }
+
+    #[test]
+    fn relative_mouse_accumulates_subpixel_motion(){
+        let mut m=Mapper::new(cfg()).unwrap();
+        m.button(KeyCode::BTN_RIGHT.0,1);
+        assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
+        m.mouse(1,0);
+        assert!((m.rel_acc_x-0.5).abs()<f32::EPSILON);
+        m.mouse(1,0);
+        assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
+    }
+
+    #[test]
+    fn keyboard_reset_releases_joystick_and_holds(){
+        let mut c=cfg();
+        c.joystick=Some(crate::config::Joystick{
+            up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+            center_x:.15,center_y:.76,radius:.08,slot:0,
+        });
+        c.holds.push(crate::config::Hold{key:"SHIFT".into(),x:.8,y:.8,slot:2});
+        let mut m=Mapper::new(c).unwrap();
+        m.key(key_code("SHIFT").unwrap(),1);
+        m.key(key_code("W").unwrap(),1);
+        assert!(m.slots[0].down&&m.slots[2].down);
+        m.reset_keyboard_state();
+        assert!(!m.slots[0].down&&!m.slots[2].down);
+        assert!(m.keys.iter().all(|x|!*x));
+    }
+}
