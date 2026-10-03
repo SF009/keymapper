@@ -82,7 +82,8 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     }
 
     loop{
-        match d.fetch_events(){
+        let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
+        match fetched{
             Ok(events)=>{
                 let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
                 for e in events{
@@ -174,7 +175,8 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
         }
 
         if fds[0].revents&libc::POLLIN!=0{
-            match d.fetch_events(){
+            let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
+            match fetched{
                 Ok(events)=>{
                     if !locked{continue}
                     let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
