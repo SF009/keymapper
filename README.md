@@ -9,6 +9,9 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - WASD normalized analog joystick
 - mouse-button held aim
 - configurable mouse sensitivity and Y inversion
+- touch and relative/unbounded FPS aim backends
+- runtime mouse lock/unlock with configurable toggle key (F8 by default)
+- conflict detection for physical key/button reuse and reserved lock key
 - tap and hold touch bindings
 - up to 16 multitouch slots
 - tracking IDs and pressure/major/minor fields
@@ -126,9 +129,9 @@ Do not run the daemon as root when the udev input permissions are configured.
 
 ## Aim behavior
 
-The generic Waydroid touch interface is absolute. The current mapper keeps an aim finger alive and moves it from the center. When it approaches the edge it recenters before the host mouse reaches a desktop boundary.
+Two aim paths are available. `mode="touch"` keeps a virtual multitouch finger and is the compatibility path for touch-first shooters such as Free Fire. `mode="relative"` emits relative `REL_X/REL_Y` motion through Waydroid's pointer input FIFO, avoiding the old edge-recenter jump and keeping the host pointer captured while aiming.
 
-That solves the normal cursor-boundary problem, but it is not mathematically identical to a native relative Android mouse. Truly unbounded FPS aim requires an Android-side relative MotionEvent/socket backend or a Waydroid patch that preserves relative motion.
+Waydroid's modern hardware composer also has an Android pointer-capture path that uses Wayland pointer constraints and a relative-pointer interface. citeturn474808search1 The direct FIFO relative backend here is intentionally separate from that Android API, so support should be tested against the exact Waydroid image/vendor in use.
 
 ## Performance design
 
@@ -138,7 +141,10 @@ That solves the normal cursor-boundary problem, but it is not mathematically ide
 - compact touch-event batches
 - normalized coordinates
 - no screenshots or OCR
-- optional EVIOCGRAB so the desktop does not also consume the captured game controls
+- EVIOCGRAB mouse/keyboard capture when enabled
+- runtime mouse lock toggle: F8 by default; unlocking releases active aim/fire touch slots
+- relative mouse motion is batched per evdev read before being written to Android
+- conflict validation prevents ambiguous physical-input ownership
 
 The project is intentionally small enough to run comfortably on low-RAM systems.
 
