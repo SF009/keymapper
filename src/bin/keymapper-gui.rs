@@ -21,7 +21,7 @@ use std::{
 
 const APP_ID:&str="io.sf009.WaydroidKeymapper";
 
-#[derive(Clone,Copy,Debug)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
 enum BindingRef { Tap(usize), Hold(usize), MouseTap(usize), MouseHold(usize), Aim, Joystick }
 
 struct State {
@@ -35,6 +35,7 @@ struct State {
 struct Ui {
     state:Rc<RefCell<State>>,
     profile_list:ListBox,
+    bindings_box:GtkBox,
     canvas:DrawingArea,
     status:Label,
     profile_name:Entry,
@@ -319,7 +320,7 @@ fn add_section(parent:&GtkBox,title:&str)->GtkBox{
 }
 
 fn rebuild_bindings(ui:&Ui){
-    while let Some(child)=ui.profile_list.first_child(){ui.profile_list.remove(&child);}
+    while let Some(child)=ui.bindings_box.first_child(){ui.bindings_box.remove(&child);}
     let cfg=ui.state.borrow().cfg.clone();
 
     let mk_group=|title:&str|->GtkBox{
@@ -350,7 +351,7 @@ fn rebuild_bindings(ui:&Ui){
             group.append(&row);
         }
         let holder=GtkBox::new(Orientation::Vertical,2);holder.append(&group);
-        ui.profile_list.append(&holder);
+        ui.bindings_box.append(&holder);
     }
     if let Some(j)=&cfg.joystick{
         let row=GtkBox::new(Orientation::Horizontal,6);
@@ -358,7 +359,7 @@ fn rebuild_bindings(ui:&Ui){
         text.set_halign(gtk4::Align::Start);text.set_hexpand(true);
         let edit=Button::with_label("Edit");
         let ui2=ui.clone();edit.connect_clicked(move |_|{select_binding(&ui2,BindingRef::Joystick);});
-        row.append(&text);row.append(&edit);ui.profile_list.append(&row);
+        row.append(&text);row.append(&edit);ui.bindings_box.append(&row);
     }
     if let Some(a)=&cfg.aim{
         let row=GtkBox::new(Orientation::Horizontal,6);
@@ -366,7 +367,7 @@ fn rebuild_bindings(ui:&Ui){
         text.set_halign(gtk4::Align::Start);text.set_hexpand(true);
         let edit=Button::with_label("Edit");
         let ui2=ui.clone();edit.connect_clicked(move |_|{select_binding(&ui2,BindingRef::Aim);});
-        row.append(&text);row.append(&edit);ui.profile_list.append(&row);
+        row.append(&text);row.append(&edit);ui.bindings_box.append(&row);
     }
     ui.profile_list.queue_draw();
 }
@@ -592,7 +593,7 @@ fn save_current(ui:&Ui)->Result<(),String>{
     sync_state_from_form(ui);
     let name=ui.profile_name.text().trim().to_string();
     if name.is_empty(){return Err("Profile name is empty".into())}
-    let safe=name.chars().map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{'_' .chars().next().unwrap()}else{'_'}).collect::<String>();
+    let safe=name.chars().map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'}).collect::<String>();
     let safe=safe.trim_matches('_').to_string();
     if safe.is_empty(){return Err("Invalid profile name".into())}
 
@@ -630,13 +631,15 @@ fn rebuild_profiles(ui:&Ui){
     while let Some(child)=ui.profile_list.first_child(){ui.profile_list.remove(&child);}
     let files=profile_files();
     let current=ui.state.borrow().profile_path.clone();
+    let mut selected=None;
     for p in files{
         let row=ListBoxRow::new();
         let label=Label::new(Some(&display_name(&p)));label.set_xalign(0.);
         add_margins(&label,8);row.set_child(Some(&label));
+        if p==current{selected=Some(row.clone());}
         ui.profile_list.append(&row);
-        if p==current{row.set_selected(true);}
     }
+    if let Some(row)=selected{ui.profile_list.select_row(Some(&row));}
 }
 
 fn load_selected_profile(ui:&Ui,row:&ListBoxRow){
@@ -753,7 +756,7 @@ fn build_ui(app:&Application){
     let joy_x=make_spin(0.,1.,.01,3);let joy_y=make_spin(0.,1.,.01,3);let joy_radius=make_spin(.01,1.,.005,3);let joy_slot=make_spin(0.,15.,1.,0);
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
 
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -867,13 +870,13 @@ fn build_ui(app:&Application){
             let pad=16.;let cw=(ui2.canvas.width() as f64-2.*pad).max(10.);let ch=(ui2.canvas.height() as f64-2.*pad).max(10.);
             let scale=(cw/st.cfg.display.width.max(1) as f64).min(ch/st.cfg.display.height.max(1) as f64);
             let vw=st.cfg.display.width as f64*scale;let vh=st.cfg.display.height as f64*scale;
-            drop(st);
             let (sx,sy)=ss.get();
+            drop(st);
             let nx=clamp(sx+dx/vw);let ny=clamp(sy+dy/vh);
-            drop(ui2.state.borrow());
-            set_selected_position(&mut ui2.state.borrow_mut().cfg,sel,nx,ny);
-            ui2.state.borrow_mut().dirty=true;
-            ui2.state.borrow_mut().selected=Some(sel);
+            let mut state=ui2.state.borrow_mut();
+            set_selected_position(&mut state.cfg,sel,nx,ny);
+            state.dirty=true;
+            state.selected=Some(sel);
             ui2.canvas.queue_draw();
         });
         let ds2=drag_sel.clone();
@@ -889,6 +892,7 @@ fn build_ui(app:&Application){
     let initial=profile_files();
     for p in initial{
         let row=ListBoxRow::new();let label=Label::new(Some(&display_name(&p)));label.set_xalign(0.);add_margins(&label,8);row.set_child(Some(&label));profile_list.append(&row);
+        if p==ui.state.borrow().profile_path{profile_list.select_row(Some(&row));}
     }
     rebuild_bindings(&ui);sync_form(&ui);
     if let Some(row)=profile_list.selected_row(){row.grab_focus();}
