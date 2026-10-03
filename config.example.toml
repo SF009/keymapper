@@ -23,6 +23,8 @@ center_y=0.50
 sensitivity=2.0
 slot=1
 invert_y=false
+# touch = compatible absolute aim; relative = unbounded FPS mouse aim
+mode="touch"
 
 [[taps]]
 key="SPACE"
@@ -45,6 +47,9 @@ slot=4
 [performance]
 grab=true
 realtime=true
+mouse_lock=true
+# F8 toggles capture: locked -> desktop mouse released, unlocked -> capture again
+mouse_toggle_key="F8"
 
 
 [[mouse_holds]]
