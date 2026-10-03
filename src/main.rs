@@ -11,7 +11,7 @@ fn main()->Result<(),Box<dyn Error>>{
  let mut a=env::args().skip(1);
  let cmd=a.next().unwrap_or_else(||"run".into());
  let path=a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into()))));
- if cmd=="devices"{for d in evdev::enumerate(){if let Ok(d)=d{println!("{}  {}",d.physical_path().unwrap_or("-"),d.name().unwrap_or("-"));}}return Ok(())}
+ if cmd=="devices"{for (_path,d) in evdev::enumerate(){println!("{}  {}",d.physical_path().unwrap_or("-"),d.name().unwrap_or("-"));}return Ok(())}
  let cfg:Config=toml::from_str(&fs::read_to_string(path)?)?;
  if cmd=="check"{cfg.validate()?;println!("configuration OK");println!("touch fifo: {}",cfg.touch_fifo());return Ok(())}
  if cmd!="run"{eprintln!("usage: waydroid-keymapper <run|check|devices> [config]");return Ok(())}
