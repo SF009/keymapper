@@ -16,16 +16,39 @@ pub struct Config{
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Display{pub width:i32,pub height:i32}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Devices{pub keyboard:Option<String>,pub mouse:Option<String>}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Joystick{pub up:String,pub down:String,pub left:String,pub right:String,pub center_x:f32,pub center_y:f32,pub radius:f32,#[serde(default)]pub slot:u8}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Aim{pub button:String,pub center_x:f32,pub center_y:f32,#[serde(default="ds")]pub sensitivity:f32,#[serde(default="s1")]pub slot:u8,#[serde(default)]pub invert_y:bool}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Aim{pub button:String,pub center_x:f32,pub center_y:f32,#[serde(default="ds")]pub sensitivity:f32,#[serde(default="s1")]pub slot:u8,#[serde(default)]pub invert_y:bool,#[serde(default="touch_mode")]pub mode:String}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Tap{pub key:String,pub x:f32,pub y:f32,#[serde(default="s2")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Hold{pub key:String,pub x:f32,pub y:f32,#[serde(default="s3")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseTap{pub button:String,pub x:f32,pub y:f32,#[serde(default="s4")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseHold{pub button:String,pub x:f32,pub y:f32,#[serde(default="s5")]pub slot:u8}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool}
-fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true}
-impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true}}}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="dt")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String}
+fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn f8()->String{"F8".into()} fn touch_mode()->String{"touch".into()}
+impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,mouse_lock:true,mouse_toggle_key:"F8".into()}}}
 
 impl Config{
+ pub fn conflicts(&self)->Vec<String>{
+  let mut out=Vec::new();
+  let mut keys:Vec<(u16,String)>=Vec::new();
+  let mut mice:Vec<(u16,String)>=Vec::new();
+  if let Some(j)=&self.joystick{
+   for (name,key) in [("joystick.up",&j.up),("joystick.down",&j.down),("joystick.left",&j.left),("joystick.right",&j.right)]{
+    if let Ok(code)=crate::input::key_code(key){keys.push((code,name.into()));}
+   }
+  }
+  for (i,x) in self.taps.iter().enumerate(){if let Ok(code)=crate::input::key_code(&x.key){keys.push((code,format!("taps[{i}]")));}}
+  for (i,x) in self.holds.iter().enumerate(){if let Ok(code)=crate::input::key_code(&x.key){keys.push((code,format!("holds[{i}]")));}}
+  if let Ok(toggle)=crate::input::key_code(&self.performance.mouse_toggle_key){keys.push((toggle,"performance.mouse_toggle_key".into()));}
+  for i in 0..keys.len(){for j in (i+1)..keys.len(){if keys[i].0==keys[j].0{out.push(format!("keyboard conflict: {} <-> {}",keys[i].1,keys[j].1));}}}
+  if let Some(a)=&self.aim{if let Ok(code)=crate::input::button_code(&a.button){mice.push((code,"aim.button".into()));}}
+  for (i,x) in self.mouse_taps.iter().enumerate(){if let Ok(code)=crate::input::button_code(&x.button){mice.push((code,format!("mouse_taps[{i}]")));}}
+  for (i,x) in self.mouse_holds.iter().enumerate(){if let Ok(code)=crate::input::button_code(&x.button){mice.push((code,format!("mouse_holds[{i}]")));}}
+  for i in 0..mice.len(){for j in (i+1)..mice.len(){if mice[i].0==mice[j].0{out.push(format!("mouse conflict: {} <-> {}",mice[i].1,mice[j].1));}}}
+  if let Some(j)=&self.joystick{
+   let dirs=[("up",&j.up), ("down",&j.down), ("left",&j.left), ("right",&j.right)];
+   for i in 0..dirs.len(){for k in (i+1)..dirs.len(){if dirs[i].1.eq_ignore_ascii_case(dirs[k].1){out.push(format!("joystick conflict: {} and {} use {}",dirs[i].0,dirs[k].0,dirs[i].1));}}}
+  }
+  out
+ }
  pub fn validate(&self)->Result<(),Box<dyn Error>>{
   if self.display.width<=0||self.display.height<=0{return Err("invalid display size".into())}
   if self.display.width>16384||self.display.height>16384{return Err("display size is too large".into())}
@@ -48,16 +71,24 @@ impl Config{
    reserve(a.slot)?;
    crate::input::button_code(&a.button)?;
    if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.sensitivity>100.0{return Err("invalid aim".into())}
+   match a.mode.to_ascii_lowercase().as_str(){"touch"|"relative"=>{},_=>return Err("aim mode must be touch or relative".into())}
   }
   for x in &self.taps{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard tap".into())}}
   for x in &self.holds{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard hold".into())}}
   for x in &self.mouse_taps{crate::input::button_code(&x.button)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid mouse tap".into())}}
   for x in &self.mouse_holds{crate::input::button_code(&x.button)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid mouse hold".into())}}
+  crate::input::key_code(&self.performance.mouse_toggle_key)?;
+  if let Some(msg)=self.conflicts().into_iter().next(){return Err(msg.into())}
   Ok(())
  }
  pub fn touch_fifo(&self)->String{
   if let Ok(p)=env::var("WAYDROID_TOUCH_FIFO"){return p}
   let c=["/dev/input/wl_touch_events","/var/lib/waydroid/rootfs/dev/input/wl_touch_events","/opt/waydroid/rootfs/dev/input/wl_touch_events"];
+  c.iter().find(|p|Path::new(p).exists()).map(|p|p.to_string()).unwrap_or_else(||c[0].into())
+ }
+ pub fn pointer_fifo(&self)->String{
+  if let Ok(p)=env::var("WAYDROID_POINTER_FIFO"){return p}
+  let c=["/dev/input/wl_pointer_events","/var/lib/waydroid/rootfs/dev/input/wl_pointer_events","/opt/waydroid/rootfs/dev/input/wl_pointer_events"];
   c.iter().find(|p|Path::new(p).exists()).map(|p|p.to_string()).unwrap_or_else(||c[0].into())
  }
 }
