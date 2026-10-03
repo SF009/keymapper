@@ -1,0 +1,2 @@
+KERNEL=="uinput", MODE="0660", GROUP="input"
+KERNEL=="event*", SUBSYSTEM=="input", MODE="0660", GROUP="input"
