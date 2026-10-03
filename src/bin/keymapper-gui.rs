@@ -415,6 +415,7 @@ fn fill_devices(combo:&ComboBoxText,selected:&Option<String>,mouse:bool){
     combo.remove_all();
     combo.append(None,"(None)");
 
+    let mut candidates:Vec<(i32,String,String)>=Vec::new();
     for(path,d)in evdev::enumerate(){
         let is_mouse=d.supported_keys().map(|k|
             k.contains(evdev::KeyCode::BTN_LEFT)||
@@ -438,15 +439,32 @@ fn fill_devices(combo:&ComboBoxText,selected:&Option<String>,mouse:bool){
         }
 
         let id=path.to_string_lossy().to_string();
-        let label=format!("{} — {}",d.name().unwrap_or("input"),id);
-        combo.append(Some(&id),&label);
+        let name=d.name().unwrap_or("input").to_string();
+        let lower=name.to_ascii_lowercase();
+        let mut score=0;
+        if !lower.contains("virtual"){score+=40}
+        if !lower.contains("ydotool"){score+=40}
+        if !lower.contains("keyd"){score+=40}
+        if mouse{
+            if lower.contains("usb"){score+=25}
+            if lower.contains("optical"){score+=15}
+            if lower.contains("touchpad"){score-=35}
+        }else{
+            if lower.contains("at translated"){score+=25}
+            if lower.contains("keyboard"){score+=15}
+        }
+        candidates.push((score,id,format!("{} — {}",name,id)));
     }
 
-    match selected{
-        Some(s)=>{
-            if !combo.set_active_id(Some(s)){combo.set_active(Some(0));}
-        }
-        None=>combo.set_active(Some(0)),
+    candidates.sort_by(|a,b|b.0.cmp(&a.0).then_with(||a.1.cmp(&b.1)));
+    for(_,id,label)in &candidates{combo.append(Some(id),label);}
+
+    if let Some(s)=selected{
+        if !combo.set_active_id(Some(s)){combo.set_active(Some(0));}
+    }else if let Some((_,id,_))=candidates.first(){
+        combo.set_active_id(Some(id));
+    }else{
+        combo.set_active(Some(0));
     }
 }
 
