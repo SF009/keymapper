@@ -70,7 +70,7 @@ The included example uses:
     R            -> reload tap slot 3
     F            -> hold slot 4
 
-For Fire, add a hold binding for MOUSE_LEFT by using a keyboard-compatible physical button mapping in a future profile backend; the current core keeps keyboard and mouse buttons separate by design.
+For Fire, use a [[mouse_holds]] binding such as MOUSE_LEFT. The mapper also accepts MOUSE_MIDDLE, MOUSE_SIDE, MOUSE_EXTRA, MOUSE_FORWARD and MOUSE_BACK, plus common keyboard keys including 0-9, F1-F12, arrows, navigation keys and numpad digits.
 
 ## GTK4 GUI / Profile Editor
 
