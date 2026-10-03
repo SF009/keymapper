@@ -2,12 +2,13 @@ use crate::touch::Mapper;
 use evdev::{Device,EventSummary,KeyCode,RelativeAxisCode};
 use std::{
     error::Error,
+    io,
+    os::fd::{AsRawFd,FromRawFd,OwnedFd},
     sync::{
         atomic::{AtomicBool,Ordering},
         Arc,Mutex,
     },
     thread,
-    time::Duration,
 };
 
 const MAX_INPUT_CODE:usize=1024;
@@ -17,9 +18,35 @@ pub enum InputKind{Keyboard,Mouse}
 
 pub struct RuntimeControl{
     pub mouse_locked:AtomicBool,
+    mouse_event:OwnedFd,
 }
 impl RuntimeControl{
-    pub fn new(locked:bool)->Arc<Self>{Arc::new(Self{mouse_locked:AtomicBool::new(locked)})}
+    pub fn new(locked:bool)->io::Result<Arc<Self>>{
+        let fd=unsafe{libc::eventfd(0,libc::EFD_CLOEXEC|libc::EFD_NONBLOCK)};
+        if fd<0{return Err(io::Error::last_os_error())}
+        Ok(Arc::new(Self{mouse_locked:AtomicBool::new(locked),mouse_event:unsafe{OwnedFd::from_raw_fd(fd)}}))
+    }
+    pub fn notify_mouse(&self){
+        let value:libc::c_ulonglong=1;
+        unsafe{
+            let _=libc::write(
+                self.mouse_event.as_raw_fd(),
+                (&value as*const libc::c_ulonglong).cast::<libc::c_void>(),
+                std::mem::size_of::<libc::c_ulonglong>(),
+            );
+        }
+    }
+    fn drain_notifications(&self){
+        let mut value:libc::c_ulonglong=0;
+        unsafe{
+            let _=libc::read(
+                self.mouse_event.as_raw_fd(),
+                (&mut value as*mut libc::c_ulonglong).cast::<libc::c_void>(),
+                std::mem::size_of::<libc::c_ulonglong>(),
+            );
+        }
+    }
+    fn event_fd(&self)->i32{self.mouse_event.as_raw_fd()}
 }
 
 pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->Result<(),Box<dyn Error>>{
@@ -43,68 +70,77 @@ pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:
                                     if Some(c.0)==toggle && v==1{
                                         let next=!control.mouse_locked.load(Ordering::Acquire);
                                         control.mouse_locked.store(next,Ordering::Release);
+                                        control.notify_mouse();
                                         continue;
                                     }
                                     m.key(c.0,v);
                                 }
                             }
                         }
-                        Err(_)=>thread::sleep(Duration::from_millis(1)),
+                        Err(_)=>thread::yield_now(),
                     }
                 }
             }
             InputKind::Mouse=>{
+                if d.set_nonblocking(true).is_err(){
+                    eprintln!("failed to set nonblocking mouse input for {path}");
+                    return;
+                }
                 let mut locked=control.mouse_locked.load(Ordering::Acquire);
                 if grab && locked{
                     if let Err(e)=d.grab(){eprintln!("mouse grab failed for {path}: {e}");locked=false;}
                 }
-                {
-                    let mut m=mapper.lock().unwrap();
-                    m.set_mouse_lock(locked);
-                }
+                mapper.lock().unwrap().set_mouse_lock(locked);
+
                 loop{
-                    let desired=control.mouse_locked.load(Ordering::Acquire);
-                    if desired!=locked{
-                        let ok=if grab{
-                            if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
-                        }else{true};
-                        if ok{
-                            locked=desired;
-                            mapper.lock().unwrap().set_mouse_lock(locked);
+                    let mut fds=[
+                        libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
+                        libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
+                    ];
+                    let rc=unsafe{libc::poll(fds.as_mut_ptr(),fds.len() as libc::nfds_t,-1)};
+                    if rc<0{
+                        if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
+                        thread::yield_now();continue;
+                    }
+
+                    if fds[1].revents&(libc::POLLIN|libc::POLLERR)!=0{
+                        control.drain_notifications();
+                        let desired=control.mouse_locked.load(Ordering::Acquire);
+                        if desired!=locked{
+                            let ok=if grab{
+                                if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
+                            }else{true};
+                            if ok{
+                                locked=desired;
+                                mapper.lock().unwrap().set_mouse_lock(locked);
+                            }
                         }
                     }
-                    match d.fetch_events(){
-                        Ok(events)=>{
-                            let desired=control.mouse_locked.load(Ordering::Acquire);
-                            if desired!=locked{
-                                let ok=if grab{
-                                    if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
-                                }else{true};
-                                if ok{
-                                    locked=desired;
-                                    mapper.lock().unwrap().set_mouse_lock(locked);
-                                }
-                            }
-                            if !locked{continue}
-                            let mut m=mapper.lock().unwrap();
-                            let mut dx=0i32;
-                            let mut dy=0i32;
-                            for e in events{
-                                match e.destructure(){
-                                    EventSummary::RelativeAxis(_,c,v)=>{
-                                        if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
-                                        else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
+
+                    if fds[0].revents&(libc::POLLIN|libc::POLLERR|libc::POLLHUP)!=0{
+                        match d.fetch_events(){
+                            Ok(events)=>{
+                                if !locked{continue}
+                                let mut m=mapper.lock().unwrap();
+                                let mut dx=0i32;
+                                let mut dy=0i32;
+                                for e in events{
+                                    match e.destructure(){
+                                        EventSummary::RelativeAxis(_,c,v)=>{
+                                            if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
+                                            else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
+                                        }
+                                        EventSummary::Key(_,c,v)=>{
+                                            if dx!=0||dy!=0{m.mouse(dx,dy);dx=0;dy=0;}
+                                            m.button(c.0,v);
+                                        }
+                                        _=>{}
                                     }
-                                    EventSummary::Key(_,c,v)=>{
-                                        if dx!=0||dy!=0{m.mouse(dx,dy);dx=0;dy=0;}
-                                        m.button(c.0,v);
-                                    }
-                                    _=>{}
                                 }
+                                if dx!=0||dy!=0{m.mouse(dx,dy);}
                             }
-                            if dx!=0||dy!=0{m.mouse(dx,dy);}
+                            Err(_)=>thread::yield_now(),
                         }
-                        Err(_)=>thread::sleep(Duration::from_millis(1)),
                     }
                 }
             }
