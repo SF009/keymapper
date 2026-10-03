@@ -38,9 +38,14 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
             format!("OK running=1 locked={} socket={}",if locked{1}else{0},socket_path().display())
         }
         "lock"=>{
-            control.mouse_locked.store(true,std::sync::atomic::Ordering::Release);
-            control.notify_mouse();
-            "OK requested=lock".to_string()
+            let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
+            if !can_grab{
+                "ERR cannot-lock: exclusive input grab is disabled".to_string()
+            }else{
+                control.mouse_locked.store(true,std::sync::atomic::Ordering::Release);
+                control.notify_mouse();
+                "OK requested=lock".to_string()
+            }
         }
         "unlock"=>{
             control.mouse_locked.store(false,std::sync::atomic::Ordering::Release);
