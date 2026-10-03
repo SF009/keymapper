@@ -75,6 +75,16 @@ pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:
                     }
                     match d.fetch_events(){
                         Ok(events)=>{
+                            let desired=control.mouse_locked.load(Ordering::Acquire);
+                            if desired!=locked{
+                                let ok=if grab{
+                                    if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
+                                }else{true};
+                                if ok{
+                                    locked=desired;
+                                    mapper.lock().unwrap().set_mouse_lock(locked);
+                                }
+                            }
                             if !locked{continue}
                             let mut m=mapper.lock().unwrap();
                             let mut dx=0i32;
