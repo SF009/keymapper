@@ -407,6 +407,7 @@ fn delete_binding(ui:&Ui,sel:BindingRef){
 #[derive(Clone,Copy)]
 enum EditType{KeyboardTap,KeyboardHold,MouseTap,MouseHold}
 
+#[allow(dead_code)]
 fn add_binding_buttons(parent:&GtkBox,ui:&Ui){
     let bar=GtkBox::new(Orientation::Horizontal,6);
     for(title,kind) in [
@@ -835,10 +836,6 @@ fn build_ui(app:&Application){
     main_paned.set_end_child(Some(&settings_scroll));
     main_paned.set_position(1200);
     root.remove(&paned);root.append(&main_paned);
-
-    // Binding panel contents are kept in the left sidebar.
-    // add_binding_buttons uses the actual mapping dialogs; the compact +Key/+Mouse menu below is redundant but convenient.
-    add_binding_buttons(&bindings_box,&ui);
 
     let app_window=ApplicationWindow::builder().application(app).title("Waydroid Keymapper").default_width(1550).default_height(900).build();
     app_window.set_child(Some(&root));
