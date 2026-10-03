@@ -125,7 +125,7 @@ mod tests{
  fn relative_aim_is_valid(){
   let mut c=base();
   c.aim=Some(Aim{
-   button:"MOUSE_RIGHT".into(),center_x:.5,center_y:.5,sensitivity:2.,
+   button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
    slot:1,invert_y:false,mode:"relative".into(),
   });
   assert!(c.validate().is_ok());
@@ -136,9 +136,9 @@ mod tests{
   let mut c=base();
   c.joystick=Some(Joystick{
    up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-   center_x:.15,center_y:.76,radius:.085,slot:0,
+   center_x:0.15,center_y:0.76,radius:0.085,slot:0,
   });
-  c.holds.push(Hold{key:"W".into(),x:.3,y:.3,slot:2});
+  c.holds.push(Hold{key:"W".into(),x:0.3,y:0.3,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("keyboard conflict")));
   assert!(c.validate().is_err());
  }
@@ -147,10 +147,10 @@ mod tests{
  fn aim_and_fire_button_conflict_is_rejected(){
   let mut c=base();
   c.aim=Some(Aim{
-   button:"MOUSE_LEFT".into(),center_x:.5,center_y:.5,sensitivity:2.,
+   button:"MOUSE_LEFT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
    slot:1,invert_y:false,mode:"touch".into(),
   });
-  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.8,y:.8,slot:2});
+  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:0.8,y:0.8,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("mouse conflict")));
   assert!(c.validate().is_err());
  }
@@ -166,8 +166,8 @@ mod tests{
  #[test]
  fn unique_slots_are_accepted(){
   let mut c=base();
-  c.taps.push(Tap{key:"SPACE".into(),x:.8,y:.8,slot:2});
-  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.9,y:.8,slot:3});
+  c.taps.push(Tap{key:"SPACE".into(),x:0.8,y:0.8,slot:2});
+  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:0.9,y:0.8,slot:3});
   assert!(c.validate().is_ok());
  }
 }
