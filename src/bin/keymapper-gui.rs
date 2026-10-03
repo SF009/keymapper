@@ -1,6 +1,7 @@
 #[path="../config.rs"] mod config;
 #[path="../input.rs"] mod input;
 #[path="../touch.rs"] mod touch;
+#[path="../control.rs"] mod control;
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap};
 use gtk4::prelude::*;
@@ -753,7 +754,137 @@ fn save_current(ui:&Ui)->Result<(),String>{
     }
 }
 
+const USER_SERVICE:&str="waydroid-keymapper.service";
+
+fn user_bin_dir()->PathBuf{home_dir().join(".local/bin")}
+fn user_service_dir()->PathBuf{home_dir().join(".config/systemd/user")}
+fn daemon_install_path()->PathBuf{user_bin_dir().join("waydroid-keymapper")}
+
+fn daemon_source()->Option<PathBuf>{
+    let exe=env::current_exe().ok();
+    let mut candidates=Vec::new();
+    if let Some(e)=exe{
+        if let Some(parent)=e.parent(){candidates.push(parent.join("waydroid-keymapper"));}
+    }
+    candidates.push(daemon_install_path());
+    for p in candidates{
+        if p.is_file(){return Some(p)}
+    }
+    None
+}
+
+fn service_unit()->String{
+    format!(r#"[Unit]
+Description=Waydroid Rust Game Keymapper
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/waydroid-keymapper run %h/.config/waydroid-keymapper/config.toml
+Restart=on-failure
+RestartSec=1
+Nice=0
+
+[Install]
+WantedBy=graphical-session.target
+"#)
+}
+
+fn install_runtime()->Result<(),String>{
+    fs::create_dir_all(user_bin_dir()).map_err(|e|e.to_string())?;
+    fs::create_dir_all(user_service_dir()).map_err(|e|e.to_string())?;
+
+    let dst=daemon_install_path();
+    if let Some(src)=daemon_source(){
+        let same=src.canonicalize().ok()==dst.canonicalize().ok();
+        if !same{
+            let tmp=dst.with_extension("tmp");
+            fs::copy(&src,&tmp).map_err(|e|format!("install daemon: {e}"))?;
+            let mut perms=fs::metadata(&tmp).map_err(|e|e.to_string())?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&tmp,perms).map_err(|e|e.to_string())?;
+            fs::rename(&tmp,&dst).map_err(|e|format!("activate daemon: {e}"))?;
+        }
+    }else if !dst.is_file(){
+        return Err("waydroid-keymapper binary not found next to the GUI or in ~/.local/bin".into())
+    }
+
+    let unit=user_service_dir().join(USER_SERVICE);
+    let tmp=unit.with_extension("tmp");
+    fs::write(&tmp,service_unit()).map_err(|e|format!("write service: {e}"))?;
+    fs::rename(&tmp,&unit).map_err(|e|format!("activate service: {e}"))?;
+
+    let reload=Command::new("systemctl").args(["--user","daemon-reload"]).output()
+        .map_err(|e|format!("systemctl daemon-reload: {e}"))?;
+    if !reload.status.success(){
+        return Err(String::from_utf8_lossy(&reload.stderr).trim().to_string())
+    }
+    Ok(())
+}
+
+fn service_action(action:&str)->Result<String,String>{
+    if action!="stop"{install_runtime()?}
+    let args=match action{
+        "start"=>vec!["--user","enable","--now",USER_SERVICE],
+        "stop"=>vec!["--user","stop",USER_SERVICE],
+        "restart"=>vec!["--user","restart",USER_SERVICE],
+        _=>return Err("unknown service action".into()),
+    };
+    let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
+    if out.status.success(){Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
+    else{Err(String::from_utf8_lossy(&out.stderr).trim().to_string())}
+}
+
+fn runtime_service_state()->String{
+    let out=Command::new("systemctl").args(["--user","is-active",USER_SERVICE]).output();
+    match out{
+        Ok(o) if o.status.success()=>"Running".into(),
+        Ok(_)=>if user_service_dir().join(USER_SERVICE).is_file(){"Stopped".into()}else{"Not installed".into()},
+        Err(_)=>"systemctl unavailable".into(),
+    }
+}
+
+fn update_runtime_status(ui:&Ui){
+    let svc=runtime_service_state();
+    ui.runtime_status.set_text(&format!("Service: {svc}"));
+    match control::request("status"){
+        Ok(reply)=>{
+            let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
+            ui.lock_status.set_text(if locked=="1"{"Mouse: 🔒 LOCKED"}else{"Mouse: 🖱 UNLOCKED"});
+        }
+        Err(_)=>ui.lock_status.set_text("Mouse: offline"),
+    }
+}
+
+fn runtime_control(ui:&Ui,command:&str){
+    match control::request(command){
+        Ok(reply)=>set_status(ui,&format!("Daemon: {reply}")),
+        Err(e)=>set_status(ui,&format!("Daemon control unavailable: {e}")),
+    }
+    update_runtime_status(ui);
+}
+
+fn waydroid_action(ui:&Ui,action:&str){
+    let result=Command::new("waydroid").args(["session",action]).spawn();
+    match result{
+        Ok(_)=>set_status(ui,&format!("Waydroid session {action} requested")),
+        Err(e)=>set_status(ui,&format!("Waydroid command failed: {e}")),
+    }
+}
+
+fn waydroid_state()->String{
+    match Command::new("waydroid").arg("status").output(){
+        Ok(o)=>{
+            let x=String::from_utf8_lossy(&o.stdout).trim().replace('\n'," • ");
+            if x.is_empty(){String::from("Unknown")}else{x}
+        }
+        Err(_) => String::from("Unavailable"),
+    }
+}
+
 fn apply_and_run(ui:&Ui){
+    if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
     match save_current(ui){
         Ok(())=>{
             let st=ui.state.borrow();
@@ -768,13 +899,12 @@ fn apply_and_run(ui:&Ui){
                 set_status(ui,&format!("Activate config failed: {e}"));
                 return
             }
-            let out=Command::new("systemctl").args(["--user","restart","waydroid-keymapper.service"]).output();
-            match out{
-                Ok(o) if o.status.success()=>set_status(ui,"Profile applied and keymapper restarted ✓"),
-                Ok(o)=>set_status(ui,&format!("Profile applied; service restart failed: {}",String::from_utf8_lossy(&o.stderr))),
-                Err(e)=>set_status(ui,&format!("Profile applied; systemctl failed: {e}")),
+            match service_action("restart"){
+                Ok(_)=>set_status(ui,"Profile applied • daemon restarted ✓"),
+                Err(e)=>set_status(ui,&format!("Profile applied; daemon restart failed: {e}")),
             }
             rebuild_profiles(ui);
+            update_runtime_status(ui);
         }
         Err(e)=>set_status(ui,&format!("Save failed: {e}")),
     }
