@@ -13,20 +13,23 @@ impl Pipe{
  }
  fn send(&mut self,es:&[(u16,u16,i32)])->io::Result<()>{
   let Some(f)=self.f.as_mut()else{return Ok(())};
-  for&(t,c,v)in es{let e=E{i64a:0,i64b:0,t,c,v};let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,std::mem::size_of::<E>())};if let Err(x)=f.write_all(b){self.f=None;return Err(x)}}
+  let mut buf=Vec::with_capacity(es.len()*std::mem::size_of::<E>());
+  for&(t,c,v)in es{let e=E{i64a:0,i64b:0,t,c,v};let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,std::mem::size_of::<E>())};buf.extend_from_slice(b)}
+  if let Err(x)=f.write_all(&buf){self.f=None;return Err(x)}
   Ok(())
  }
 }
-#[derive(Clone,Copy)]struct C{down:bool,tracking:i32}
+#[derive(Clone,Copy)]struct C{down:bool}
 pub struct Mapper{cfg:Arc<Config>,pipe:Pipe,slots:[C;16],next:i32,mx:f32,my:f32,aim:bool,keys:[bool;512]}
 impl Mapper{
- pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{let mut p=Pipe::new(cfg.touch_fifo());let _=p.connect();Ok(Self{cfg:Arc::new(cfg),pipe:p,slots:[C{down:false,tracking:-1};16],next:1,mx:.5,my:.5,aim:false,keys:[false;512]})}
+ pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{let mut p=Pipe::new(cfg.touch_fifo());let _=p.connect();Ok(Self{cfg:Arc::new(cfg),pipe:p,slots:[C{down:false};16],next:1,mx:.5,my:.5,aim:false,keys:[false;512]})}
  pub fn config(&self)->&Config{&self.cfg}
  fn out(&mut self,e:&[(u16,u16,i32)]){if self.pipe.f.is_none(){let _=self.pipe.connect()}let _=self.pipe.send(e)}
  fn xy(&self,x:f32,y:f32)->(i32,i32){((x.clamp(0.,1.)*(self.cfg.display.width-1)as f32).round()as i32,(y.clamp(0.,1.)*(self.cfg.display.height-1)as f32).round()as i32)}
- fn down(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16{return}let(x,y)=self.xy(x,y);let id=self.next;self.next+=1;self.slots[i]=C{down:true,tracking:id};self.out(&[(ABS,SLOT,s as i32),(ABS,ID,id),(ABS,X,x),(ABS,Y,y),(ABS,MAJOR,8),(ABS,MINOR,8),(ABS,PRESS,80),(KEY,BTN_TOUCH,1),(SYN,0,0)])}
+ fn down(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16{return}let(x,y)=self.xy(x,y);let id=self.next;self.next=self.next.wrapping_add(1);self.slots[i]=C{down:true};self.out(&[(ABS,SLOT,s as i32),(ABS,ID,id),(ABS,X,x),(ABS,Y,y),(ABS,MAJOR,8),(ABS,MINOR,8),(ABS,PRESS,80),(KEY,BTN_TOUCH,1),(SYN,0,0)])}
  fn mv(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16||!self.slots[i].down{return}let(x,y)=self.xy(x,y);self.out(&[(ABS,SLOT,s as i32),(ABS,X,x),(ABS,Y,y),(ABS,PRESS,80),(SYN,0,0)])}
- fn up(&mut self,s:u8){let i=s as usize;if i>=16||!self.slots[i].down{return}self.out(&[(ABS,SLOT,s as i32),(ABS,ID,-1),(ABS,PRESS,0),(KEY,BTN_TOUCH,0),(SYN,0,0)]);self.slots[i].down=false}
+ fn any_down(&self)->bool{self.slots.iter().any(|c|c.down)}
+ fn up(&mut self,s:u8){let i=s as usize;if i>=16||!self.slots[i].down{return}self.slots[i].down=false;let last=!self.any_down();let mut e=vec![(ABS,SLOT,s as i32),(ABS,ID,-1),(ABS,PRESS,0)];if last{e.push((KEY,BTN_TOUCH,0))}e.push((SYN,0,0));self.out(&e)}
  pub fn key(&mut self,c:u16,v:i32){if let Some(x)=self.keys.get_mut(c as usize){*x=v!=0}
   if let Some(j)=self.cfg.joystick.clone(){if [key_code(&j.up),key_code(&j.down),key_code(&j.left),key_code(&j.right)].iter().flatten().any(|&x|x==c){self.joy(j);return}}
   for t in self.cfg.taps.clone(){if key_code(&t.key).ok()==Some(c)&&v==1{self.down(t.slot,t.x,t.y);self.up(t.slot);return}}
