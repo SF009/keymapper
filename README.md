@@ -77,10 +77,14 @@ For Fire, use a [[mouse_holds]] binding such as MOUSE_LEFT. The mapper also acce
 
 ## GTK4 GUI / Profile Editor
 
+The GTK4 GUI is the primary management interface. It creates the first profile automatically and can install/repair the per-user daemon, write the user systemd unit, start/stop/restart the daemon, control mouse lock/unlock live, start/stop the Waydroid session, validate mappings, and activate the selected profile. No root shell is required for normal daemon/profile management.
+
+
+
 The project also ships a native GTK4 profile editor:
 
     cargo build --release --bin keymapper-gui
-    install -Dm755 target/release/keymapper-gui ~/.local/bin/waydroid-keymapper-gui
+    install -Dm755 target/release/keymapper-gui ~/.local/bin/keymapper-gui
     install -Dm644 data/waydroid-keymapper.desktop ~/.local/share/applications/waydroid-keymapper.desktop
     update-desktop-database ~/.local/share/applications 2>/dev/null || true
 
@@ -97,6 +101,11 @@ Profiles are stored in:
     ~/.config/waydroid-keymapper/profiles/
 
 The GUI supports:
+- automatic physical keyboard/mouse detection with virtual-device filtering
+- live daemon status and live mouse LOCKED/UNLOCKED state through a private per-user Unix control socket
+- Install / Repair, Start, Stop and Restart for the user daemon service
+- direct Lock, Unlock and Toggle commands without editing TOML or using the terminal
+- Waydroid session Start/Stop controls and status display
 
 - create, duplicate, delete and rename profiles
 - import the existing active config as the first profile
@@ -119,7 +128,9 @@ Start Waydroid, then:
 
     waydroid-keymapper run
 
-Optional user service:
+The GUI installs and manages the optional user service automatically. The manual service commands below are only a fallback for headless setups.
+
+Optional user service (manual/headless):
 
     install -Dm644 systemd/waydroid-keymapper.service ~/.config/systemd/user/waydroid-keymapper.service
     systemctl --user daemon-reload

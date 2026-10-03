@@ -1,6 +1,7 @@
 #[path="../config.rs"] mod config;
 #[path="../input.rs"] mod input;
 #[path="../touch.rs"] mod touch;
+#[path="../control.rs"] mod control;
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap};
 use gtk4::prelude::*;
@@ -15,9 +16,11 @@ use std::{
     env,
     error::Error,
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path,PathBuf},
     process::Command,
     rc::Rc,
+    time::Duration,
 };
 
 const APP_ID:&str="io.sf009.WaydroidKeymapper";
@@ -65,6 +68,8 @@ struct Ui {
     realtime:CheckButton,
     mouse_lock:CheckButton,
     mouse_toggle:Entry,
+    runtime_status:Label,
+    lock_status:Label,
 }
 
 fn home_dir()->PathBuf{
@@ -408,16 +413,58 @@ fn form_row(grid:&Grid,row:i32,label:&str,w:&impl gtk4::prelude::WidgetExt){
 
 fn fill_devices(combo:&ComboBoxText,selected:&Option<String>,mouse:bool){
     combo.remove_all();
+    combo.append(None,"(None)");
+
+    let mut candidates:Vec<(i32,String,String)>=Vec::new();
     for(path,d)in evdev::enumerate(){
-        let looks=d.name().unwrap_or("").to_ascii_lowercase();
-        if mouse && !(looks.contains("mouse")||looks.contains("touchpad")||looks.contains("trackpad")){continue}
+        let is_mouse=d.supported_keys().map(|k|
+            k.contains(evdev::KeyCode::BTN_LEFT)||
+            k.contains(evdev::KeyCode::BTN_RIGHT)||
+            k.contains(evdev::KeyCode::BTN_MIDDLE)
+        ).unwrap_or(false);
+        let has_relative=d.supported_relative_axes().map(|a|
+            a.contains(evdev::RelativeAxisCode::REL_X)||
+            a.contains(evdev::RelativeAxisCode::REL_Y)
+        ).unwrap_or(false);
+        let is_keyboard=d.supported_keys().map(|k|
+            k.contains(evdev::KeyCode::KEY_A)||
+            k.contains(evdev::KeyCode::KEY_W)||
+            k.contains(evdev::KeyCode::KEY_ENTER)
+        ).unwrap_or(false);
+
+        if mouse{
+            if !(is_mouse&&has_relative){continue}
+        }else if !is_keyboard{
+            continue
+        }
+
         let id=path.to_string_lossy().to_string();
-        let label=format!("{} — {}",d.name().unwrap_or("input"),id);
-        combo.append(Some(&id),&label);
+        let name=d.name().unwrap_or("input").to_string();
+        let lower=name.to_ascii_lowercase();
+        let mut score=0;
+        if !lower.contains("virtual"){score+=40}
+        if !lower.contains("ydotool"){score+=40}
+        if !lower.contains("keyd"){score+=40}
+        if mouse{
+            if lower.contains("usb"){score+=25}
+            if lower.contains("optical"){score+=15}
+            if lower.contains("touchpad"){score-=35}
+        }else{
+            if lower.contains("at translated"){score+=25}
+            if lower.contains("keyboard"){score+=15}
+        }
+        candidates.push((score,id,format!("{} — {}",name,id)));
     }
-    match selected{
-        Some(s)=>{combo.set_active_id(Some(s));},
-        None=>{combo.set_active(Some(0));},
+
+    candidates.sort_by(|a,b|b.0.cmp(&a.0).then_with(||a.1.cmp(&b.1)));
+    for(_,id,label)in &candidates{combo.append(Some(id),label);}
+
+    if let Some(s)=selected{
+        if !combo.set_active_id(Some(s)){combo.set_active(Some(0));}
+    }else if let Some((_,id,_))=candidates.first(){
+        combo.set_active_id(Some(id));
+    }else{
+        combo.set_active(Some(0));
     }
 }
 
@@ -729,7 +776,180 @@ fn save_current(ui:&Ui)->Result<(),String>{
     }
 }
 
+const USER_SERVICE:&str="waydroid-keymapper.service";
+
+fn user_bin_dir()->PathBuf{home_dir().join(".local/bin")}
+fn user_service_dir()->PathBuf{home_dir().join(".config/systemd/user")}
+fn daemon_install_path()->PathBuf{user_bin_dir().join("waydroid-keymapper")}
+fn gui_install_path()->PathBuf{user_bin_dir().join("keymapper-gui")}
+fn desktop_file_path()->PathBuf{home_dir().join(".local/share/applications/waydroid-keymapper.desktop")}
+
+fn install_user_executable(src:&Path,dst:&Path)->Result<(),String>{
+    if src.canonicalize().ok()==dst.canonicalize().ok(){return Ok(())}
+    let tmp=dst.with_extension("tmp");
+    fs::copy(src,&tmp).map_err(|e|format!("install {}: {e}",dst.display()))?;
+    let mut perms=fs::metadata(&tmp).map_err(|e|e.to_string())?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&tmp,perms).map_err(|e|e.to_string())?;
+    fs::rename(&tmp,dst).map_err(|e|format!("activate {}: {e}",dst.display()))?;
+    Ok(())
+}
+
+fn desktop_entry()->&'static str{r#"[Desktop Entry]
+Type=Application
+Name=Waydroid Keymapper
+Comment=Low-latency Waydroid keyboard and mouse profile editor
+Exec=%h/.local/bin/keymapper-gui
+Icon=input-gaming
+Terminal=false
+Categories=Utility;Game;
+Keywords=Waydroid;Android;Gaming;Keymapper;
+"#}
+
+fn daemon_source()->Option<PathBuf>{
+    let exe=env::current_exe().ok();
+    let mut candidates=Vec::new();
+    if let Some(e)=exe{
+        if let Some(parent)=e.parent(){candidates.push(parent.join("waydroid-keymapper"));}
+    }
+    candidates.push(daemon_install_path());
+    for p in candidates{
+        if p.is_file(){return Some(p)}
+    }
+    None
+}
+
+fn service_unit()->String{
+    format!(r#"[Unit]
+Description=Waydroid Rust Game Keymapper
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/waydroid-keymapper run %h/.config/waydroid-keymapper/config.toml
+Restart=on-failure
+RestartSec=1
+Nice=0
+
+[Install]
+WantedBy=graphical-session.target
+"#)
+}
+
+fn install_runtime()->Result<(),String>{
+    fs::create_dir_all(user_bin_dir()).map_err(|e|e.to_string())?;
+    fs::create_dir_all(user_service_dir()).map_err(|e|e.to_string())?;
+
+    let dst=daemon_install_path();
+    if let Some(src)=daemon_source(){
+        install_user_executable(&src,&dst)?;
+    }else if !dst.is_file(){
+        return Err("waydroid-keymapper binary not found next to the GUI or in ~/.local/bin".into())
+    }
+
+    if let Ok(exe)=env::current_exe(){
+        if exe.is_file(){install_user_executable(&exe,&gui_install_path())?;}
+    }
+
+    if let Some(parent)=desktop_file_path().parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
+    let desktop=desktop_file_path();
+    let desktop_tmp=desktop.with_extension("desktop.tmp");
+    fs::write(&desktop_tmp,desktop_entry()).map_err(|e|format!("write desktop launcher: {e}"))?;
+    fs::rename(&desktop_tmp,&desktop).map_err(|e|format!("activate desktop launcher: {e}"))?;
+
+    let unit=user_service_dir().join(USER_SERVICE);
+    let tmp=unit.with_extension("tmp");
+    fs::write(&tmp,service_unit()).map_err(|e|format!("write service: {e}"))?;
+    fs::rename(&tmp,&unit).map_err(|e|format!("activate service: {e}"))?;
+
+    let reload=Command::new("systemctl").args(["--user","daemon-reload"]).output()
+        .map_err(|e|format!("systemctl daemon-reload: {e}"))?;
+    if !reload.status.success(){
+        return Err(String::from_utf8_lossy(&reload.stderr).trim().to_string())
+    }
+    Ok(())
+}
+
+fn service_action(action:&str)->Result<String,String>{
+    if action=="stop"{
+        let out=Command::new("systemctl").args(["--user","stop",USER_SERVICE]).output().map_err(|e|e.to_string())?;
+        if out.status.success(){return Ok(String::new())}
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+
+    install_runtime()?;
+
+    if action=="start"{
+        let args=["--user","enable","--now",USER_SERVICE];
+        let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
+        if out.status.success(){return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+
+    if action=="restart"{
+        let active=Command::new("systemctl").args(["--user","is-active",USER_SERVICE]).output();
+        let args=match active{
+            Ok(o) if o.status.success()=>vec!["--user","restart",USER_SERVICE],
+            _=>vec!["--user","enable","--now",USER_SERVICE],
+        };
+        let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
+        if out.status.success(){return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+
+    Err("unknown service action".into())
+}
+
+fn runtime_service_state()->String{
+    let out=Command::new("systemctl").args(["--user","is-active",USER_SERVICE]).output();
+    match out{
+        Ok(o) if o.status.success()=>"Running".into(),
+        Ok(_)=>if user_service_dir().join(USER_SERVICE).is_file(){"Stopped".into()}else{"Not installed".into()},
+        Err(_)=>"systemctl unavailable".into(),
+    }
+}
+
+fn update_runtime_status(ui:&Ui){
+    let svc=runtime_service_state();
+    ui.runtime_status.set_text(&format!("Service: {svc}"));
+    match control::request("status"){
+        Ok(reply)=>{
+            let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
+            ui.lock_status.set_text(if locked=="1"{"Mouse: 🔒 LOCKED"}else{"Mouse: 🖱 UNLOCKED"});
+        }
+        Err(_)=>ui.lock_status.set_text("Mouse: offline"),
+    }
+}
+
+fn runtime_control(ui:&Ui,command:&str){
+    match control::request(command){
+        Ok(reply)=>set_status(ui,&format!("Daemon: {reply}")),
+        Err(e)=>set_status(ui,&format!("Daemon control unavailable: {e}")),
+    }
+    update_runtime_status(ui);
+}
+
+fn waydroid_action(ui:&Ui,action:&str){
+    let result=Command::new("waydroid").args(["session",action]).spawn();
+    match result{
+        Ok(_)=>set_status(ui,&format!("Waydroid session {action} requested")),
+        Err(e)=>set_status(ui,&format!("Waydroid command failed: {e}")),
+    }
+}
+
+fn waydroid_state()->String{
+    match Command::new("waydroid").arg("status").output(){
+        Ok(o)=>{
+            let x=String::from_utf8_lossy(&o.stdout).trim().replace('\n'," • ");
+            if x.is_empty(){String::from("Unknown")}else{x}
+        }
+        Err(_) => String::from("Unavailable"),
+    }
+}
+
 fn apply_and_run(ui:&Ui){
+    if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
     match save_current(ui){
         Ok(())=>{
             let st=ui.state.borrow();
@@ -737,14 +957,19 @@ fn apply_and_run(ui:&Ui){
             let data=match fs::read_to_string(&st.profile_path){Ok(x)=>x,Err(e)=>{set_status(ui,&format!("Read profile failed: {e}"));return}};
             drop(st);
             if let Some(parent)=active.parent(){let _=fs::create_dir_all(parent);}
-            if let Err(e)=fs::write(&active,data){set_status(ui,&format!("Write active config failed: {e}"));return}
-            let out=Command::new("systemctl").args(["--user","restart","waydroid-keymapper.service"]).output();
-            match out{
-                Ok(o) if o.status.success()=>set_status(ui,"Profile applied and keymapper restarted ✓"),
-                Ok(o)=>set_status(ui,&format!("Profile applied; service restart failed: {}",String::from_utf8_lossy(&o.stderr))),
-                Err(e)=>set_status(ui,&format!("Profile applied; systemctl failed: {e}")),
+            let tmp=active.with_extension("toml.tmp");
+            if let Err(e)=fs::write(&tmp,data){set_status(ui,&format!("Write active config failed: {e}"));return}
+            if let Err(e)=fs::rename(&tmp,&active){
+                let _=fs::remove_file(&tmp);
+                set_status(ui,&format!("Activate config failed: {e}"));
+                return
+            }
+            match service_action("restart"){
+                Ok(_)=>set_status(ui,"Profile applied • daemon restarted ✓"),
+                Err(e)=>set_status(ui,&format!("Profile applied; daemon restart failed: {e}")),
             }
             rebuild_profiles(ui);
+            update_runtime_status(ui);
         }
         Err(e)=>set_status(ui,&format!("Save failed: {e}")),
     }
@@ -886,9 +1111,13 @@ fn build_ui(app:&Application){
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
     let mouse_lock=CheckButton::with_label("Lock mouse on start");
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
+    let runtime_status=Label::new(Some("Service: Not installed"));
+    let lock_status=Label::new(Some("Mouse: offline"));
+    runtime_status.set_halign(gtk4::Align::Start);
+    lock_status.set_halign(gtk4::Align::Start);
 
     let bindings_box=GtkBox::new(Orientation::Vertical,6);
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone(),mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -902,8 +1131,14 @@ fn build_ui(app:&Application){
     let left=GtkBox::new(Orientation::Vertical,6);add_margins(&left,8);
     left.append(&Label::new(Some("Profiles")));
     let profile_scroll=ScrolledWindow::new();profile_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);profile_scroll.set_child(Some(&profile_list));profile_scroll.set_min_content_width(220);profile_scroll.set_vexpand(true);left.append(&profile_scroll);
-    let addbar=GtkBox::new(Orientation::Horizontal,5);let addkey=Button::with_label("+ Key");let addmouse=Button::with_label("+ Mouse");
-    addbar.append(&addkey);addbar.append(&addmouse);left.append(&addbar);
+    let addbar=GtkBox::new(Orientation::Horizontal,5);
+    let add_key_tap=Button::with_label("+ Key TAP");
+    let add_key_hold=Button::with_label("+ Key HOLD");
+    let add_mouse_tap=Button::with_label("+ Mouse TAP");
+    let add_mouse_hold=Button::with_label("+ Mouse HOLD");
+    addbar.append(&add_key_tap);addbar.append(&add_key_hold);
+    addbar.append(&add_mouse_tap);addbar.append(&add_mouse_hold);
+    left.append(&addbar);
     let bindings_scroll=ScrolledWindow::new();bindings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
     bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(false);
     addbar.append(&Button::with_label("Bindings below"));
@@ -949,9 +1184,33 @@ fn build_ui(app:&Application){
     joystick.append(&jg);
 
     let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);
-    let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);form_row(&mg,0,"Lock toggle key",&mouse_toggle);perf.append(&mg);
-    let help=Label::new(Some("Drag any marker in the preview. Coordinates are normalized 0..1.\\nSlots must be unique at runtime. The GUI never runs in the input hot path."));
+    let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);
+    let toggle_box=GtkBox::new(Orientation::Horizontal,5);
+    let capture_toggle=Button::with_label("Capture");
+    toggle_box.append(&mouse_toggle);toggle_box.append(&capture_toggle);
+    form_row(&mg,0,"Lock toggle key",&toggle_box);perf.append(&mg);
+    let help=Label::new(Some("The toggle key is reserved for mouse capture and cannot also be a gameplay binding."));
     help.set_wrap(true);help.set_halign(gtk4::Align::Start);perf.append(&help);
+
+    let runtime=add_section(&right,"Runtime");
+    runtime.append(&runtime_status);runtime.append(&lock_status);
+    let rb1=GtkBox::new(Orientation::Horizontal,5);
+    let install_btn=Button::with_label("Install / Repair");
+    let start_btn=Button::with_label("Start");
+    let stop_btn=Button::with_label("Stop");
+    let restart_btn=Button::with_label("Restart");
+    rb1.append(&install_btn);rb1.append(&start_btn);rb1.append(&stop_btn);rb1.append(&restart_btn);runtime.append(&rb1);
+    let rb2=GtkBox::new(Orientation::Horizontal,5);
+    let lock_btn=Button::with_label("🔒 Lock");
+    let unlock_btn=Button::with_label("🖱 Unlock");
+    let toggle_btn=Button::with_label("Toggle");
+    rb2.append(&lock_btn);rb2.append(&unlock_btn);rb2.append(&toggle_btn);runtime.append(&rb2);
+    let waydroid_state_label=Label::new(Some(&format!("Waydroid: {}",waydroid_state())));
+    waydroid_state_label.set_halign(gtk4::Align::Start);runtime.append(&waydroid_state_label);
+    let wb=GtkBox::new(Orientation::Horizontal,5);
+    let waydroid_start=Button::with_label("Start Waydroid");
+    let waydroid_stop=Button::with_label("Stop Waydroid");
+    wb.append(&waydroid_start);wb.append(&waydroid_stop);runtime.append(&wb);
 
     paned.set_start_child(Some(&left));paned.set_resize_start_child(true);paned.set_shrink_start_child(false);
     paned.set_end_child(Some(&center));paned.set_resize_end_child(true);
@@ -1036,6 +1295,45 @@ fn build_ui(app:&Application){
     rebuild_bindings(&ui);sync_form(&ui);
     if let Some(row)=profile_list.selected_row(){row.grab_focus();}
 
+    attach_key_capture(&mouse_toggle,&capture_toggle,&status);
+
+    let ui2=ui.clone();install_btn.connect_clicked(move |_|{
+        match install_runtime(){Ok(())=>set_status(&ui2,"Runtime installed/repaired ✓"),Err(e)=>set_status(&ui2,&format!("Runtime setup failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();start_btn.connect_clicked(move |_|{
+        match service_action("start"){Ok(_)=>set_status(&ui2,"Daemon service started ✓"),Err(e)=>set_status(&ui2,&format!("Start failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();stop_btn.connect_clicked(move |_|{
+        match service_action("stop"){Ok(_)=>set_status(&ui2,"Daemon service stopped"),Err(e)=>set_status(&ui2,&format!("Stop failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();restart_btn.connect_clicked(move |_|{
+        match service_action("restart"){Ok(_)=>set_status(&ui2,"Daemon service restarted ✓"),Err(e)=>set_status(&ui2,&format!("Restart failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();lock_btn.connect_clicked(move |_|runtime_control(&ui2,"lock"));
+    let ui2=ui.clone();unlock_btn.connect_clicked(move |_|runtime_control(&ui2,"unlock"));
+    let ui2=ui.clone();toggle_btn.connect_clicked(move |_|runtime_control(&ui2,"toggle"));
+    let ui2=ui.clone();waydroid_start.connect_clicked(move |_|waydroid_action(&ui2,"start"));
+    let ui2=ui.clone();waydroid_stop.connect_clicked(move |_|waydroid_action(&ui2,"stop"));
+
+    {
+        let ui2=ui.clone();
+        glib::timeout_add_local(Duration::from_millis(700),move||{
+            update_runtime_status(&ui2);
+            glib::ControlFlow::Continue
+        });
+    }
+    {
+        let label=waydroid_state_label.clone();
+        glib::timeout_add_local(Duration::from_secs(2),move||{
+            label.set_text(&format!("Waydroid: {}",waydroid_state()));
+            glib::ControlFlow::Continue
+        });
+    }
+
     let ui2=ui.clone();let win_new=app_window.clone();
     new_btn.connect_clicked(move |_|new_profile(&ui2,&win_new));
     let ui2=ui.clone();let win_dup=app_window.clone();
@@ -1044,10 +1342,21 @@ fn build_ui(app:&Application){
     let ui2=ui.clone();save.connect_clicked(move |_|match save_current(&ui2){Ok(())=>{rebuild_profiles(&ui2);set_status(&ui2,"Saved ✓")},Err(e)=>set_status(&ui2,&format!("Save failed: {e}"))});
     let ui2=ui.clone();apply.connect_clicked(move |_|apply_and_run(&ui2));
     let ui2=ui.clone();validate.connect_clicked(move |_|validate_current(&ui2));
-    let ui2=ui.clone();refresh_dev.connect_clicked(move |_|sync_form(&ui2));
+    let ui2=ui.clone();refresh_dev.connect_clicked(move |_|{
+        let cfg=ui2.state.borrow().cfg.clone();
+        fill_devices(&ui2.keyboard,&cfg.devices.keyboard,false);
+        fill_devices(&ui2.mouse,&cfg.devices.mouse,true);
+        set_status(&ui2,"Input devices refreshed");
+    });
 
-    let ui2=ui.clone();addkey.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::KeyboardTap));
-    let ui2=ui.clone();addmouse.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::MouseHold));
+    let ui2=ui.clone();free_fire_btn.connect_clicked(move |_|apply_preset(&ui2,ShooterPreset::FreeFire));
+    let ui2=ui.clone();fps_btn.connect_clicked(move |_|apply_preset(&ui2,ShooterPreset::Fps));
+    let ui2=ui.clone();minimal_btn.connect_clicked(move |_|apply_preset(&ui2,ShooterPreset::Minimal));
+
+    let ui2=ui.clone();add_key_tap.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::KeyboardTap));
+    let ui2=ui.clone();add_key_hold.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::KeyboardHold));
+    let ui2=ui.clone();add_mouse_tap.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::MouseTap));
+    let ui2=ui.clone();add_mouse_hold.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::MouseHold));
 
     app_window.present();
 }

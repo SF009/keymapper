@@ -1,18 +1,39 @@
 mod config;
+mod control;
 mod input;
 mod touch;
 
 use config::Config;
 use input::{spawn_input,InputKind,RuntimeControl};
-use std::{env,error::Error,fs,sync::{Arc,Mutex},thread,time::Duration};
+use std::{env,error::Error,fs,path::PathBuf,sync::{Arc,Mutex},thread,time::Duration};
 use touch::Mapper;
 
+fn print_help(){
+ eprintln!("Waydroid Keymapper — low-latency keyboard/mouse mapper");
+ eprintln!();
+ eprintln!("Usage:");
+ eprintln!("  waydroid-keymapper [run] [CONFIG]");
+ eprintln!("  waydroid-keymapper check [CONFIG]");
+ eprintln!("  waydroid-keymapper devices");
+ eprintln!("  waydroid-keymapper --help");
+}
+
 fn main()->Result<(),Box<dyn Error>>{
+ // Waydroid's FIFO reader can disappear during a restart. Ignore SIGPIPE so
+ // the mapper receives EPIPE and can reconnect instead of being terminated.
+ unsafe{libc::signal(libc::SIGPIPE,libc::SIG_IGN);}
+
  let mut a=env::args().skip(1);
  let cmd=a.next().unwrap_or_else(||"run".into());
- let path=a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into()))));
+ if matches!(cmd.as_str(),"--help"|"-h"|"help"){print_help();return Ok(())}
+ if matches!(cmd.as_str(),"--version"|"-V"){
+  println!("{}",env!("CARGO_PKG_VERSION"));
+  return Ok(())
+ }
+ let path=PathBuf::from(a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into())))));
  if cmd=="devices"{for (_path,d) in evdev::enumerate(){println!("{}  {}",d.physical_path().unwrap_or("-"),d.name().unwrap_or("-"));}return Ok(())}
- let cfg:Config=toml::from_str(&fs::read_to_string(path)?)?;
+ let data=fs::read_to_string(&path).map_err(|e|format!("cannot read config '{}': {e}. Open the GTK GUI to create/manage it.",path.display()))?;
+ let cfg:Config=toml::from_str(&data)?;
  if cmd=="check"{
   let conflicts=cfg.conflicts();
   if !conflicts.is_empty(){
@@ -33,6 +54,7 @@ fn main()->Result<(),Box<dyn Error>>{
  let control=RuntimeControl::new(cfg.performance.mouse_lock)?;
  if let Some(d)=cfg.devices.keyboard.clone(){spawn_input(d,InputKind::Keyboard,mapper.clone(),control.clone())?}
  if let Some(d)=cfg.devices.mouse.clone(){spawn_input(d,InputKind::Mouse,mapper.clone(),control.clone())?}
+ let _=control::spawn_server(mapper.clone(),control.clone());
  eprintln!("waydroid-keymapper: running");
  loop{thread::sleep(Duration::from_secs(3600))}
 }

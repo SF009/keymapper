@@ -11,8 +11,6 @@ use std::{
     thread,
 };
 
-const MAX_INPUT_CODE:usize=1024;
-
 #[derive(Clone,Copy)]
 pub enum InputKind{Keyboard,Mouse}
 
@@ -49,103 +47,181 @@ impl RuntimeControl{
     fn event_fd(&self)->i32{self.mouse_event.as_raw_fd()}
 }
 
-pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->Result<(),Box<dyn Error>>{
-    thread::Builder::new().name(match kind{InputKind::Keyboard=>"wd-keyboard",InputKind::Mouse=>"wd-mouse"}.into()).spawn(move||{
-        let mut d=match Device::open(&path){
-            Ok(x)=>x,
-            Err(e)=>{eprintln!("open {path}: {e}");return}
-        };
-        let grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
-        let toggle=mapper.lock().ok().and_then(|m|key_code(&m.config().performance.mouse_toggle_key).ok());
+fn best_effort_realtime(enabled:bool,thread_name:&str){
+    if !enabled{return}
+    let mut param=libc::sched_param{sched_priority:10};
+    let rc=unsafe{libc::sched_setscheduler(0,libc::SCHED_FIFO,&mut param)};
+    if rc<0{
+        // User services normally lack CAP_SYS_NICE. The preference is therefore
+        // best-effort and must never prevent the mapper from starting.
+        let err=io::Error::last_os_error();
+        if err.raw_os_error()!=Some(libc::EPERM){
+            eprintln!("waydroid-keymapper: realtime scheduling for {thread_name} unavailable: {err}");
+        }
+    }
+}
 
-        match kind{
-            InputKind::Keyboard=>{
-                if grab{let _=d.grab();}
-                loop{
-                    match d.fetch_events(){
-                        Ok(events)=>{
-                            let mut m=mapper.lock().unwrap();
-                            for e in events{
-                                if let EventSummary::Key(_,c,v)=e.destructure(){
-                                    if Some(c.0)==toggle && v==1{
-                                        let next=!control.mouse_locked.load(Ordering::Acquire);
-                                        control.mouse_locked.store(next,Ordering::Release);
-                                        control.notify_mouse();
-                                        continue;
-                                    }
-                                    m.key(c.0,v);
-                                }
-                            }
+fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>){
+    let mut d=match Device::open(path){
+        Ok(x)=>x,
+        Err(e)=>{eprintln!("waydroid-keymapper: open keyboard {path}: {e}");return}
+    };
+
+    let (grab,realtime,toggle)=match mapper.lock(){
+        Ok(m)=>(
+            m.config().performance.grab,
+            m.config().performance.realtime,
+            key_code(&m.config().performance.mouse_toggle_key).ok(),
+        ),
+        Err(_)=>return,
+    };
+    best_effort_realtime(realtime,"wd-keyboard");
+
+    if grab{
+        if let Err(e)=d.grab(){eprintln!("waydroid-keymapper: keyboard grab failed for {path}: {e}");}
+    }
+
+    loop{
+        let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
+        match fetched{
+            Ok(events)=>{
+                let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
+                for e in events{
+                    if let EventSummary::Key(_,c,v)=e.destructure(){
+                        if Some(c.0)==toggle && v==1{
+                            let next=!control.mouse_locked.load(Ordering::Acquire);
+                            control.mouse_locked.store(next,Ordering::Release);
+                            control.notify_mouse();
+                            continue;
                         }
-                        Err(_)=>thread::yield_now(),
+                        m.key(c.0,v);
                     }
                 }
             }
-            InputKind::Mouse=>{
-                if d.set_nonblocking(true).is_err(){
-                    eprintln!("failed to set nonblocking mouse input for {path}");
-                    return;
-                }
-                let mut locked=control.mouse_locked.load(Ordering::Acquire);
-                if grab && locked{
-                    if let Err(e)=d.grab(){eprintln!("mouse grab failed for {path}: {e}");locked=false;}
-                }
-                mapper.lock().unwrap().set_mouse_lock(locked);
+            Err(e)=>{
+                if matches!(e.kind(),io::ErrorKind::Interrupted){continue}
+                let _=d.ungrab();
+                if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
+                return;
+            }
+        }
+    }
+}
 
-                loop{
-                    let mut fds=[
-                        libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
-                        libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
-                    ];
-                    let rc=unsafe{libc::poll(fds.as_mut_ptr(),fds.len() as libc::nfds_t,-1)};
-                    if rc<0{
-                        if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
-                        thread::yield_now();continue;
-                    }
+fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>){
+    let mut d=match Device::open(path){
+        Ok(x)=>x,
+        Err(e)=>{eprintln!("waydroid-keymapper: open mouse {path}: {e}");return}
+    };
 
-                    if fds[1].revents&(libc::POLLIN|libc::POLLERR)!=0{
-                        control.drain_notifications();
-                        let desired=control.mouse_locked.load(Ordering::Acquire);
-                        if desired!=locked{
-                            let ok=if grab{
-                                if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
-                            }else{true};
-                            if ok{
-                                locked=desired;
-                                mapper.lock().unwrap().set_mouse_lock(locked);
-                            }
-                        }
-                    }
+    if d.set_nonblocking(true).is_err(){
+        eprintln!("waydroid-keymapper: failed to set nonblocking mouse input for {path}");
+        return;
+    }
 
-                    if fds[0].revents&(libc::POLLIN|libc::POLLERR|libc::POLLHUP)!=0{
-                        match d.fetch_events(){
-                            Ok(events)=>{
-                                if !locked{continue}
-                                let mut m=mapper.lock().unwrap();
-                                let mut dx=0i32;
-                                let mut dy=0i32;
-                                for e in events{
-                                    match e.destructure(){
-                                        EventSummary::RelativeAxis(_,c,v)=>{
-                                            if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
-                                            else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
-                                        }
-                                        EventSummary::Key(_,c,v)=>{
-                                            if dx!=0||dy!=0{m.mouse(dx,dy);dx=0;dy=0;}
-                                            m.button(c.0,v);
-                                        }
-                                        _=>{}
-                                    }
-                                }
-                                if dx!=0||dy!=0{m.mouse(dx,dy);}
-                            }
-                            Err(_)=>thread::yield_now(),
-                        }
-                    }
+    let (grab,realtime)=match mapper.lock(){
+        Ok(m)=>(m.config().performance.grab,m.config().performance.realtime),
+        Err(_)=>return,
+    };
+    best_effort_realtime(realtime,"wd-mouse");
+
+    let mut locked=control.mouse_locked.load(Ordering::Acquire);
+    if grab && locked{
+        if let Err(e)=d.grab(){
+            eprintln!("waydroid-keymapper: mouse grab failed for {path}: {e}");
+            locked=false;
+            control.mouse_locked.store(false,Ordering::Release);
+        }
+    }
+    if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
+
+    loop{
+        let mut fds=[
+            libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
+            libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
+        ];
+
+        let rc=unsafe{libc::poll(fds.as_mut_ptr(),fds.len() as libc::nfds_t,-1)};
+        if rc<0{
+            if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
+            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            return;
+        }
+
+        if fds[1].revents&(libc::POLLIN|libc::POLLERR)!=0{
+            control.drain_notifications();
+            let desired=control.mouse_locked.load(Ordering::Acquire);
+            if desired!=locked{
+                let ok=if grab{
+                    if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
+                }else{true};
+
+                if ok{
+                    locked=desired;
+                    if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
+                }else if desired{
+                    // Never report locked while the kernel grab actually failed.
+                    control.mouse_locked.store(false,Ordering::Release);
+                    locked=false;
+                    if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
                 }
             }
         }
-    })?;
+
+        if fds[0].revents&(libc::POLLERR|libc::POLLHUP|libc::POLLNVAL)!=0{
+            let _=d.ungrab();
+            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            return;
+        }
+
+        if fds[0].revents&libc::POLLIN!=0{
+            let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
+            match fetched{
+                Ok(events)=>{
+                    if !locked{continue}
+                    let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
+                    let mut dx=0i32;
+                    let mut dy=0i32;
+                    for e in events{
+                        match e.destructure(){
+                            EventSummary::RelativeAxis(_,c,v)=>{
+                                if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
+                                else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
+                            }
+                            EventSummary::Key(_,c,v)=>{
+                                if dx!=0||dy!=0{m.mouse(dx,dy);dx=0;dy=0;}
+                                m.button(c.0,v);
+                            }
+                            _=>{}
+                        }
+                    }
+                    if dx!=0||dy!=0{m.mouse(dx,dy);}
+                }
+                Err(e)=>{
+                    if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::Interrupted){continue}
+                    let _=d.ungrab();
+                    if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+                    return;
+                }
+            }
+        }
+    }
+}
+
+pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->Result<(),Box<dyn Error>>{
+    thread::Builder::new()
+        .name(match kind{InputKind::Keyboard=>"wd-keyboard",InputKind::Mouse=>"wd-mouse"}.into())
+        .spawn(move||{
+            // Device nodes can disappear when Waydroid/USB devices restart.
+            // Keep one tiny reconnect loop rather than killing the whole daemon.
+            loop{
+                match kind{
+                    InputKind::Keyboard=>keyboard_loop(&path,&mapper,&control),
+                    InputKind::Mouse=>mouse_loop(&path,&mapper,&control),
+                }
+                thread::sleep(std::time::Duration::from_millis(250));
+            }
+        })?;
     Ok(())
 }
 

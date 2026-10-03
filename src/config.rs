@@ -52,6 +52,12 @@ impl Config{
  pub fn validate(&self)->Result<(),Box<dyn Error>>{
   if self.display.width<=0||self.display.height<=0{return Err("invalid display size".into())}
   if self.display.width>16384||self.display.height>16384{return Err("display size is too large".into())}
+  if let (Some(k),Some(m))=(&self.devices.keyboard,&self.devices.mouse){
+   if !k.is_empty()&&!m.is_empty()&&k==m{return Err("keyboard and mouse cannot use the same evdev device".into())}
+  }
+  if self.performance.mouse_lock&&!self.performance.grab{
+   return Err("mouse_lock requires performance.grab=true".into())
+  }
   if let Some(j)=&self.joystick{
    for k in [&j.up,&j.down,&j.left,&j.right]{crate::input::key_code(k)?;}
    if !(0.0..=1.0).contains(&j.center_x)||!(0.0..=1.0).contains(&j.center_y)||j.radius<=0.0||j.radius>1.0{return Err("invalid joystick".into())}
@@ -71,7 +77,7 @@ impl Config{
    reserve(a.slot)?;
    crate::input::button_code(&a.button)?;
    if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.sensitivity>100.0{return Err("invalid aim".into())}
-   match a.mode.to_ascii_lowercase().as_str(){"touch"|"relative"=>{},_=>return Err("aim mode must be touch or relative".into())}
+   match a.mode.trim().to_ascii_lowercase().as_str(){"touch"|"relative"=>{},_=>return Err("aim mode must be touch or relative".into())}
   }
   for x in &self.taps{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard tap".into())}}
   for x in &self.holds{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard hold".into())}}
@@ -119,7 +125,7 @@ mod tests{
  fn relative_aim_is_valid(){
   let mut c=base();
   c.aim=Some(Aim{
-   button:"MOUSE_RIGHT".into(),center_x:.5,center_y:.5,sensitivity:2.,
+   button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
    slot:1,invert_y:false,mode:"relative".into(),
   });
   assert!(c.validate().is_ok());
@@ -130,9 +136,9 @@ mod tests{
   let mut c=base();
   c.joystick=Some(Joystick{
    up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-   center_x:.15,center_y:.76,radius:.085,slot:0,
+   center_x:0.15,center_y:0.76,radius:0.085,slot:0,
   });
-  c.holds.push(Hold{key:"W".into(),x:.3,y:.3,slot:2});
+  c.holds.push(Hold{key:"W".into(),x:0.3,y:0.3,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("keyboard conflict")));
   assert!(c.validate().is_err());
  }
@@ -141,19 +147,27 @@ mod tests{
  fn aim_and_fire_button_conflict_is_rejected(){
   let mut c=base();
   c.aim=Some(Aim{
-   button:"MOUSE_LEFT".into(),center_x:.5,center_y:.5,sensitivity:2.,
+   button:"MOUSE_LEFT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
    slot:1,invert_y:false,mode:"touch".into(),
   });
-  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.8,y:.8,slot:2});
+  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:0.8,y:0.8,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("mouse conflict")));
+  assert!(c.validate().is_err());
+ }
+
+ #[test]
+ fn mouse_lock_requires_grab(){
+  let mut c=base();
+  c.performance.mouse_lock=true;
+  c.performance.grab=false;
   assert!(c.validate().is_err());
  }
 
  #[test]
  fn unique_slots_are_accepted(){
   let mut c=base();
-  c.taps.push(Tap{key:"SPACE".into(),x:.8,y:.8,slot:2});
-  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:.9,y:.8,slot:3});
+  c.taps.push(Tap{key:"SPACE".into(),x:0.8,y:0.8,slot:2});
+  c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:0.9,y:0.8,slot:3});
   assert!(c.validate().is_ok());
  }
 }

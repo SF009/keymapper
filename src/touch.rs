@@ -1,11 +1,11 @@
 use crate::{
-    config::{Config,Joystick},
+    config::Config,
     input::{button_code,key_code,KeyAction,MouseAction},
 };
 use std::{
     error::Error,
-    io::{self,Write},
-    os::fd::FromRawFd,
+    io::{self},
+    os::fd::{AsRawFd,FromRawFd},
     sync::Arc,
 };
 
@@ -50,30 +50,70 @@ impl Pipe{
         Ok(())
     }
     fn send(&mut self,es:&[(u16,u16,i32)]){
+        if es.is_empty(){return}
         if self.f.is_none()&&self.connect().is_err(){return}
         let Some(f)=self.f.as_mut()else{return};
-        let mut buf=[0u8;1024];
+
+        // Normal mapper batches are far below Linux PIPE_BUF. A single write
+        // keeps one multitouch transaction atomic and avoids write_all() on a
+        // non-blocking FIFO, which can turn EAGAIN/partial writes into dropped
+        // touch state.
         let size=std::mem::size_of::<E>();
         let need=es.len().saturating_mul(size);
+        let mut buf=[0u8;1024];
+
         if need>buf.len(){
+            // This path is only for unusually large batches.
             let mut v=Vec::with_capacity(need);
-            for &(t,c,value) in es{
+            for &(t,c,value)in es{
                 let e=E{i64a:0,i64b:0,t,c,v:value};
                 let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            if f.write_all(&v).is_err(){self.f=None;}
+            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
             return;
         }
+
         let mut used=0usize;
-        for &(t,c,value) in es{
+        for &(t,c,value)in es{
             let e=E{i64a:0,i64b:0,t,c,v:value};
             let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
             buf[used..used+size].copy_from_slice(b);
             used+=size;
         }
-        if f.write_all(&buf[..used]).is_err(){self.f=None;}
+
+        match pipe_write_bounded(f.as_raw_fd(),&buf[..used]){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
     }
+}
+
+fn pipe_write_bounded(fd:i32,data:&[u8])->io::Result<()>{
+    // Keep the real-time path bounded: if Waydroid's FIFO reader is temporarily
+    // busy, wait only a few short polls instead of blocking the input thread.
+    for _ in 0..3{
+        let n=unsafe{libc::write(fd,data.as_ptr().cast::<libc::c_void>(),data.len())};
+        if n==data.len() as isize{return Ok(())}
+        if n<0{
+            let err=io::Error::last_os_error();
+            match err.raw_os_error(){
+                Some(libc::EINTR)=>continue,
+                Some(libc::EAGAIN)|Some(libc::EWOULDBLOCK)=>{
+                    let mut p=libc::pollfd{fd,events:libc::POLLOUT,revents:0};
+                    let rc=unsafe{libc::poll(&mut p,1,1)};
+                    if rc>0{continue}
+                    if rc==0{break}
+                    if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
+                    return Err(io::Error::last_os_error());
+                }
+                _=>return Err(err),
+            }
+        }else{
+            // A partial write should not occur for the normal <= PIPE_BUF path.
+            // Treat it as a failed transaction rather than sending a truncated
+            // multitouch frame.
+            return Err(io::Error::new(io::ErrorKind::WriteZero,"partial FIFO write"));
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::WouldBlock,"Waydroid input FIFO busy"))
 }
 
 #[derive(Clone,Copy)]
@@ -112,6 +152,8 @@ pub struct Mapper{
     my:f32,
     aim:bool,
     mouse_locked:bool,
+    rel_acc_x:f32,
+    rel_acc_y:f32,
     keys:[bool;MAX_INPUT_CODE],
     key_actions:Box<[Option<KeyAction>]>,
     mouse_actions:Box<[Option<MouseAction>]>,
@@ -172,6 +214,7 @@ impl Mapper{
             slots:[C{down:false};16],
             next:1,
             mx:0.5,my:0.5,aim:false,mouse_locked,
+            rel_acc_x:0.0,rel_acc_y:0.0,
             keys:[false;MAX_INPUT_CODE],
             key_actions:key_actions.into_boxed_slice(),
             mouse_actions:mouse_actions.into_boxed_slice(),
@@ -181,10 +224,16 @@ impl Mapper{
 
     pub fn config(&self)->&Config{&self.cfg}
 
+    pub fn is_mouse_locked(&self)->bool{self.mouse_locked}
+
     pub fn set_mouse_lock(&mut self,locked:bool){
         if self.mouse_locked==locked{return}
         self.mouse_locked=locked;
-        if !locked{self.release_mouse_inputs();}
+        if !locked{
+            self.release_mouse_inputs();
+            self.rel_acc_x=0.0;
+            self.rel_acc_y=0.0;
+        }
     }
 
     fn out_touch(&mut self,e:&[(u16,u16,i32)]){self.touch.send(e);}
@@ -303,18 +352,25 @@ impl Mapper{
 
         if a.relative{
             if dx==0&&dy==0{return}
-            let sx=(dx as f32*a.sensitivity).round() as i32;
-            let sy=(dy as f32*a.sensitivity*(if a.invert_y{-1.}else{1.})).round() as i32;
+
+            // Preserve sub-pixel mouse movement for low sensitivities instead
+            // of rounding every evdev packet independently to zero.
+            self.rel_acc_x+=(dx as f32)*a.sensitivity;
+            self.rel_acc_y+=(dy as f32)*a.sensitivity*(if a.invert_y{-1.}else{1.});
+
+            let sx=self.rel_acc_x.trunc() as i32;
+            let sy=self.rel_acc_y.trunc() as i32;
+            self.rel_acc_x-=sx as f32;
+            self.rel_acc_y-=sy as f32;
+
             if sx==0&&sy==0{return}
+
             let mut e=[(REL,REL_X,0),(REL,REL_Y,0),(SYN,0,0)];
-            let mut n=1usize;
-            if sx!=0{e[0]=(REL,REL_X,sx);}else{e[0]=e[1];n=1;}
-            if sy!=0{
-                if sx==0{e[0]=(REL,REL_Y,sy);n=1;}
-                else{e[1]=(REL,REL_Y,sy);n=2;}
-            }
-            if sx==0&&sy==0{return}
-            e[n]=(SYN,0,0);self.out_pointer(&e[..=n]);
+            let mut n=0usize;
+            if sx!=0{e[n]=(REL,REL_X,sx);n+=1;}
+            if sy!=0{e[n]=(REL,REL_Y,sy);n+=1;}
+            e[n]=(SYN,0,0);
+            self.out_pointer(&e[..=n]);
             return;
         }
 
@@ -335,5 +391,72 @@ impl Mapper{
         for slot in 0..16{
             if self.mouse_hold_slots[slot]{self.up(slot as u8);}
         }
+        self.rel_acc_x=0.0;
+        self.rel_acc_y=0.0;
+    }
+
+    /// Clear only keyboard-owned state after an evdev keyboard disconnect.
+    pub fn reset_keyboard_state(&mut self){
+        self.keys.fill(false);
+        if let Some(j)=self.joystick{self.up(j.slot);}
+        let slots:Vec<u8>=self.cfg.holds.iter().map(|x|x.slot).collect();
+        for slot in slots{self.up(slot);}
+    }
+
+    /// Clear mouse-owned state after an evdev mouse disconnect.
+    pub fn reset_mouse_state(&mut self){
+        self.release_mouse_inputs();
+        self.rel_acc_x=0.0;
+        self.rel_acc_y=0.0;
+    }
+}
+
+ 
+#[cfg(test)]
+mod tests{
+    use evdev::KeyCode;
+    use super::*;
+    use crate::config::{Config,Display,Devices,Aim,Performance};
+
+    fn cfg()->Config{
+        Config{
+            display:Display{width:1920,height:1080},
+            devices:Devices{keyboard:None,mouse:None},
+            joystick:None,
+            aim:Some(Aim{
+                button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,
+                sensitivity:0.5,slot:1,invert_y:false,mode:"relative".into(),
+            }),
+            taps:vec![],holds:vec![],mouse_taps:vec![],mouse_holds:vec![],
+            performance:Performance::default(),
+        }
+    }
+
+    #[test]
+    fn relative_mouse_accumulates_subpixel_motion(){
+        let mut m=Mapper::new(cfg()).unwrap();
+        m.button(KeyCode::BTN_RIGHT.0,1);
+        assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
+        m.mouse(1,0);
+        assert!((m.rel_acc_x-0.5).abs()<f32::EPSILON);
+        m.mouse(1,0);
+        assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
+    }
+
+    #[test]
+    fn keyboard_reset_releases_joystick_and_holds(){
+        let mut c=cfg();
+        c.joystick=Some(crate::config::Joystick{
+            up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+            center_x:0.15,center_y:0.76,radius:0.08,slot:0,
+        });
+        c.holds.push(crate::config::Hold{key:"SHIFT".into(),x:0.8,y:0.8,slot:2});
+        let mut m=Mapper::new(c).unwrap();
+        m.key(key_code("SHIFT").unwrap(),1);
+        m.key(key_code("W").unwrap(),1);
+        assert!(m.slots[0].down&&m.slots[2].down);
+        m.reset_keyboard_state();
+        assert!(!m.slots[0].down&&!m.slots[2].down);
+        assert!(m.keys.iter().all(|x|!*x));
     }
 }
