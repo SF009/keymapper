@@ -33,14 +33,25 @@ impl Config{
    if !(0.0..=1.0).contains(&j.center_x)||!(0.0..=1.0).contains(&j.center_y)||j.radius<=0.0||j.radius>1.0{return Err("invalid joystick".into())}
    if j.slot>=16{return Err("joystick slot must be 0..15".into())}
   }
-  if let Some(a)=&self.aim{
-   crate::input::button_code(&a.button)?;
-   if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.slot>=16{return Err("invalid aim".into())}
+  let mut used=[false;16];
+  let mut reserve=|slot:u8|->Result<(),Box<dyn Error>>{
+   let i=slot as usize;
+   if i>=used.len(){return Err("touch slot must be 0..15".into())}
+   if used[i]{return Err(format!("duplicate touch slot {slot}").into())}
+   used[i]=true;Ok(())
+  };
+  if let Some(j)=&self.joystick{
+   reserve(j.slot)?;
   }
-  for x in &self.taps{crate::input::key_code(&x.key)?;if x.slot>=16||!(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard tap".into())}}
-  for x in &self.holds{crate::input::key_code(&x.key)?;if x.slot>=16||!(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard hold".into())}}
-  for x in &self.mouse_taps{crate::input::button_code(&x.button)?;if x.slot>=16||!(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid mouse tap".into())}}
-  for x in &self.mouse_holds{crate::input::button_code(&x.button)?;if x.slot>=16||!(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid mouse hold".into())}}
+  if let Some(a)=&self.aim{
+   reserve(a.slot)?;
+   crate::input::button_code(&a.button)?;
+   if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.sensitivity>100.0{return Err("invalid aim".into())}
+  }
+  for x in &self.taps{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard tap".into())}}
+  for x in &self.holds{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard hold".into())}}
+  for x in &self.mouse_taps{crate::input::button_code(&x.button)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid mouse tap".into())}}
+  for x in &self.mouse_holds{crate::input::button_code(&x.button)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid mouse hold".into())}}
   Ok(())
  }
  pub fn touch_fifo(&self)->String{
