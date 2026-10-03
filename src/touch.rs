@@ -115,7 +115,6 @@ fn pipe_write_bounded(fd:i32,data:&[u8])->io::Result<()>{
     }
     Err(io::Error::new(io::ErrorKind::WouldBlock,"Waydroid input FIFO busy"))
 }
-}
 
 #[derive(Clone,Copy)]
 struct C{down:bool}
@@ -422,8 +421,8 @@ mod tests{
             devices:Devices{keyboard:None,mouse:None},
             joystick:None,
             aim:Some(Aim{
-                button:"MOUSE_RIGHT".into(),center_x:.5,center_y:.5,
-                sensitivity:.5,slot:1,invert_y:false,mode:"relative".into(),
+                button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,
+                sensitivity:0.5,slot:1,invert_y:false,mode:"relative".into(),
             }),
             taps:vec![],holds:vec![],mouse_taps:vec![],mouse_holds:vec![],
             performance:Performance::default(),
@@ -446,9 +445,9 @@ mod tests{
         let mut c=cfg();
         c.joystick=Some(crate::config::Joystick{
             up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-            center_x:.15,center_y:.76,radius:.08,slot:0,
+            center_x:0.15,center_y:0.76,radius:0.08,slot:0,
         });
-        c.holds.push(crate::config::Hold{key:"SHIFT".into(),x:.8,y:.8,slot:2});
+        c.holds.push(crate::config::Hold{key:"SHIFT".into(),x:0.8,y:0.8,slot:2});
         let mut m=Mapper::new(c).unwrap();
         m.key(key_code("SHIFT").unwrap(),1);
         m.key(key_code("W").unwrap(),1);
