@@ -846,16 +846,33 @@ fn install_runtime()->Result<(),String>{
 }
 
 fn service_action(action:&str)->Result<String,String>{
-    if action!="stop"{install_runtime()?}
-    let args=match action{
-        "start"=>vec!["--user","enable","--now",USER_SERVICE],
-        "stop"=>vec!["--user","stop",USER_SERVICE],
-        "restart"=>vec!["--user","restart",USER_SERVICE],
-        _=>return Err("unknown service action".into()),
-    };
-    let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
-    if out.status.success(){Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
-    else{Err(String::from_utf8_lossy(&out.stderr).trim().to_string())}
+    if action=="stop"{
+        let out=Command::new("systemctl").args(["--user","stop",USER_SERVICE]).output().map_err(|e|e.to_string())?;
+        if out.status.success(){return Ok(String::new())}
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+
+    install_runtime()?;
+
+    if action=="start"{
+        let args=["--user","enable","--now",USER_SERVICE];
+        let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
+        if out.status.success(){return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+
+    if action=="restart"{
+        let active=Command::new("systemctl").args(["--user","is-active",USER_SERVICE]).output();
+        let args=match active{
+            Ok(o) if o.status.success()=>vec!["--user","restart",USER_SERVICE],
+            _=>vec!["--user","enable","--now",USER_SERVICE],
+        };
+        let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
+        if out.status.success(){return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+
+    Err("unknown service action".into())
 }
 
 fn runtime_service_state()->String{
