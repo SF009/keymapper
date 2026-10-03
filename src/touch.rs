@@ -37,6 +37,10 @@ impl Mapper{
  }
  fn pressed(&self,s:&str)->bool{key_code(s).ok().and_then(|k|self.keys.get(k as usize).copied()).unwrap_or(false)}
  fn joy(&mut self,j:Joystick){let mut dx=0.;let mut dy=0.;if self.pressed(&j.left){dx-=1.}if self.pressed(&j.right){dx+=1.}if self.pressed(&j.up){dy-=1.}if self.pressed(&j.down){dy+=1.}let l=(dx*dx+dy*dy).sqrt();if l>1.{dx/=l;dy/=l}let x=j.center_x+dx*j.radius;let y=j.center_y+dy*j.radius;if l==0.{self.up(j.slot)}else if self.slots[j.slot as usize].down{self.mv(j.slot,x,y)}else{self.down(j.slot,x,y)}}
- pub fn button(&mut self,c:u16,v:i32){if let Some(a)=self.cfg.aim.clone(){if button_code(&a.button).ok()==Some(c){self.aim=v!=0;if self.aim{self.mx=a.center_x;self.my=a.center_y;self.down(a.slot,self.mx,self.my)}else{self.up(a.slot)}}}}
+ pub fn button(&mut self,c:u16,v:i32){
+  if let Some(a)=self.cfg.aim.clone(){if button_code(&a.button).ok()==Some(c){self.aim=v!=0;if self.aim{self.mx=a.center_x;self.my=a.center_y;self.down(a.slot,self.mx,self.my)}else{self.up(a.slot)}}}
+  for t in self.cfg.mouse_taps.clone(){if button_code(&t.button).ok()==Some(c)&&v==1{self.down(t.slot,t.x,t.y);self.up(t.slot);return}}
+  for h in self.cfg.mouse_holds.clone(){if button_code(&h.button).ok()==Some(c){if v==1{self.down(h.slot,h.x,h.y)}else if v==0{self.up(h.slot)}return}}
+ }
  pub fn mouse(&mut self,dx:i32,dy:i32){let Some(a)=self.cfg.aim.clone()else{return};if !self.aim{return}self.mx+=dx as f32*a.sensitivity/self.cfg.display.width as f32;let sy=if a.invert_y{-1.}else{1.};self.my+=dy as f32*a.sensitivity*sy/self.cfg.display.height as f32;if self.mx<.08||self.mx>.92{self.mx=.5}if self.my<.08||self.my>.92{self.my=.5}self.mv(a.slot,self.mx,self.my)}
 }
