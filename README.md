@@ -72,6 +72,44 @@ The included example uses:
 
 For Fire, add a hold binding for MOUSE_LEFT by using a keyboard-compatible physical button mapping in a future profile backend; the current core keeps keyboard and mouse buttons separate by design.
 
+## GTK4 GUI / Profile Editor
+
+The project also ships a native GTK4 profile editor:
+
+    cargo build --release --bin keymapper-gui
+    install -Dm755 target/release/keymapper-gui ~/.local/bin/waydroid-keymapper-gui
+    install -Dm644 data/waydroid-keymapper.desktop ~/.local/share/applications/waydroid-keymapper.desktop
+    update-desktop-database ~/.local/share/applications 2>/dev/null || true
+
+On CachyOS / Arch, install GTK4 development/runtime packages before building:
+
+    sudo pacman -S --needed gtk4 pkgconf
+
+Launch it with:
+
+    waydroid-keymapper-gui
+
+Profiles are stored in:
+
+    ~/.config/waydroid-keymapper/profiles/
+
+The GUI supports:
+
+- create, duplicate, delete and rename profiles
+- import the existing active config as the first profile
+- keyboard TAP/HOLD mappings
+- mouse TAP/HOLD mappings
+- optional WASD joystick
+- optional mouse aim mapping with sensitivity and Y inversion
+- device selection from detected evdev devices
+- 16:9 touch-map preview with click-to-select and drag-to-position
+- normalized X/Y and touch-slot editing
+- duplicate-slot validation before saving
+- Save, Validate and Apply & Run
+- Apply & Run copies the selected profile to ~/.config/waydroid-keymapper/config.toml and restarts the user systemd service
+
+The GUI is not used by the daemon's input threads, so it adds no GUI work to the latency-sensitive input path.
+
 ## Run
 
 Start Waydroid, then:
