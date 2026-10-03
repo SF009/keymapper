@@ -103,7 +103,15 @@ fn ensure_profiles()->Result<PathBuf,Box<dyn Error>>{
     fs::create_dir_all(&dir)?;
     let default_path=dir.join("default.toml");
     if !default_path.exists(){
-        fs::write(&default_path,toml::to_string_pretty(&default_config())?)?;
+        let cfg=active_config_path();
+        if cfg.exists(){
+            match load_profile(&cfg){
+                Ok(existing)=>fs::write(&default_path,toml::to_string_pretty(&existing)?)?,
+                Err(_)=>fs::write(&default_path,toml::to_string_pretty(&default_config())?)?,
+            }
+        }else{
+            fs::write(&default_path,toml::to_string_pretty(&default_config())?)?;
+        }
     }
     Ok(dir)
 }
@@ -369,7 +377,7 @@ fn rebuild_bindings(ui:&Ui){
         let ui2=ui.clone();edit.connect_clicked(move |_|{select_binding(&ui2,BindingRef::Aim);});
         row.append(&text);row.append(&edit);ui.bindings_box.append(&row);
     }
-    ui.profile_list.queue_draw();
+    ui.bindings_box.queue_draw();
 }
 
 fn select_binding(ui:&Ui,sel:BindingRef){
@@ -598,10 +606,14 @@ fn save_current(ui:&Ui)->Result<(),String>{
     if safe.is_empty(){return Err("Invalid profile name".into())}
 
     let mut st=ui.state.borrow_mut();
+    let old_path=st.profile_path.clone();
     let new_path=profiles_dir().join(format!("{safe}.toml"));
-    st.profile_path=new_path;
-    match save_profile(&st.profile_path,&st.cfg){
-        Ok(())=>{st.dirty=false;ui.profile_name.set_text(&safe);Ok(())}
+    if new_path!=old_path && new_path.exists(){return Err("A profile with that name already exists".into())}
+    match save_profile(&new_path,&st.cfg){
+        Ok(())=>{
+            if new_path!=old_path{let _=fs::remove_file(old_path);}
+            st.profile_path=new_path;st.dirty=false;ui.profile_name.set_text(&safe);Ok(())
+        }
         Err(e)=>Err(e.to_string()),
     }
 }
@@ -673,7 +685,7 @@ fn ask_name(parent:&ApplicationWindow,title:&str,initial:&str,callback:impl Fn(S
 
 fn new_profile(ui:&Ui,app:&ApplicationWindow){
     let ui2=ui.clone();
-    ask_name(app,"New profile","pubg",&move|name|{
+    ask_name(app,"New profile","pubg",move|name|{
         if name.is_empty(){return}
         let path=profiles_dir().join(format!("{name}.toml"));
         if path.exists(){set_status(&ui2,"Profile already exists");return}
