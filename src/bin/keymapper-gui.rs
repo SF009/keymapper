@@ -391,10 +391,10 @@ fn delete_binding(ui:&Ui,sel:BindingRef){
     {
         let mut st=ui.state.borrow_mut();
         match sel{
-            BindingRef::Tap(i)=>{if i<st.cfg.taps.len(){st.cfg.taps.remove(i)}},
-            BindingRef::Hold(i)=>{if i<st.cfg.holds.len(){st.cfg.holds.remove(i)}},
-            BindingRef::MouseTap(i)=>{if i<st.cfg.mouse_taps.len(){st.cfg.mouse_taps.remove(i)}},
-            BindingRef::MouseHold(i)=>{if i<st.cfg.mouse_holds.len(){st.cfg.mouse_holds.remove(i)}},
+            BindingRef::Tap(i)=>{if i<st.cfg.taps.len(){st.cfg.taps.remove(i);}},
+            BindingRef::Hold(i)=>{if i<st.cfg.holds.len(){st.cfg.holds.remove(i);}},
+            BindingRef::MouseTap(i)=>{if i<st.cfg.mouse_taps.len(){st.cfg.mouse_taps.remove(i);}},
+            BindingRef::MouseHold(i)=>{if i<st.cfg.mouse_holds.len(){st.cfg.mouse_holds.remove(i);}},
             BindingRef::Aim=>st.cfg.aim=None,
             BindingRef::Joystick=>st.cfg.joystick=None,
         }
@@ -911,8 +911,10 @@ fn build_ui(app:&Application){
     rebuild_bindings(&ui);sync_form(&ui);
     if let Some(row)=profile_list.selected_row(){row.grab_focus();}
 
-    let ui2=ui.clone();new_btn.connect_clicked(move |_|new_profile(&ui2,&app_window));
-    let ui2=ui.clone();dup_btn.connect_clicked(move |_|duplicate_profile(&ui2,&app_window));
+    let ui2=ui.clone();let win_new=app_window.clone();
+    new_btn.connect_clicked(move |_|new_profile(&ui2,&win_new));
+    let ui2=ui.clone();let win_dup=app_window.clone();
+    dup_btn.connect_clicked(move |_|duplicate_profile(&ui2,&win_dup));
     let ui2=ui.clone();del_btn.connect_clicked(move |_|delete_profile(&ui2));
     let ui2=ui.clone();save.connect_clicked(move |_|match save_current(&ui2){Ok(())=>{rebuild_profiles(&ui2);set_status(&ui2,"Saved ✓")},Err(e)=>set_status(&ui2,&format!("Save failed: {e}"))});
     let ui2=ui.clone();apply.connect_clicked(move |_|apply_and_run(&ui2));
