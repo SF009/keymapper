@@ -408,16 +408,40 @@ fn form_row(grid:&Grid,row:i32,label:&str,w:&impl gtk4::prelude::WidgetExt){
 
 fn fill_devices(combo:&ComboBoxText,selected:&Option<String>,mouse:bool){
     combo.remove_all();
+    combo.append(None,"(None)");
+
     for(path,d)in evdev::enumerate(){
-        let looks=d.name().unwrap_or("").to_ascii_lowercase();
-        if mouse && !(looks.contains("mouse")||looks.contains("touchpad")||looks.contains("trackpad")){continue}
+        let is_mouse=d.supported_keys().map(|k|
+            k.contains(evdev::KeyCode::BTN_LEFT)||
+            k.contains(evdev::KeyCode::BTN_RIGHT)||
+            k.contains(evdev::KeyCode::BTN_MIDDLE)
+        ).unwrap_or(false);
+        let has_relative=d.supported_relative_axes().map(|a|
+            a.contains(evdev::RelativeAxisCode::REL_X)||
+            a.contains(evdev::RelativeAxisCode::REL_Y)
+        ).unwrap_or(false);
+        let is_keyboard=d.supported_keys().map(|k|
+            k.contains(evdev::KeyCode::KEY_A)||
+            k.contains(evdev::KeyCode::KEY_W)||
+            k.contains(evdev::KeyCode::KEY_ENTER)
+        ).unwrap_or(false);
+
+        if mouse{
+            if !(is_mouse&&has_relative){continue}
+        }else if !is_keyboard{
+            continue
+        }
+
         let id=path.to_string_lossy().to_string();
         let label=format!("{} — {}",d.name().unwrap_or("input"),id);
         combo.append(Some(&id),&label);
     }
+
     match selected{
-        Some(s)=>{combo.set_active_id(Some(s));},
-        None=>{combo.set_active(Some(0));},
+        Some(s)=>{
+            if !combo.set_active_id(Some(s)){combo.set_active(Some(0));}
+        }
+        None=>combo.set_active(Some(0)),
     }
 }
 
@@ -737,7 +761,13 @@ fn apply_and_run(ui:&Ui){
             let data=match fs::read_to_string(&st.profile_path){Ok(x)=>x,Err(e)=>{set_status(ui,&format!("Read profile failed: {e}"));return}};
             drop(st);
             if let Some(parent)=active.parent(){let _=fs::create_dir_all(parent);}
-            if let Err(e)=fs::write(&active,data){set_status(ui,&format!("Write active config failed: {e}"));return}
+            let tmp=active.with_extension("toml.tmp");
+            if let Err(e)=fs::write(&tmp,data){set_status(ui,&format!("Write active config failed: {e}"));return}
+            if let Err(e)=fs::rename(&tmp,&active){
+                let _=fs::remove_file(&tmp);
+                set_status(ui,&format!("Activate config failed: {e}"));
+                return
+            }
             let out=Command::new("systemctl").args(["--user","restart","waydroid-keymapper.service"]).output();
             match out{
                 Ok(o) if o.status.success()=>set_status(ui,"Profile applied and keymapper restarted ✓"),
@@ -902,8 +932,14 @@ fn build_ui(app:&Application){
     let left=GtkBox::new(Orientation::Vertical,6);add_margins(&left,8);
     left.append(&Label::new(Some("Profiles")));
     let profile_scroll=ScrolledWindow::new();profile_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);profile_scroll.set_child(Some(&profile_list));profile_scroll.set_min_content_width(220);profile_scroll.set_vexpand(true);left.append(&profile_scroll);
-    let addbar=GtkBox::new(Orientation::Horizontal,5);let addkey=Button::with_label("+ Key");let addmouse=Button::with_label("+ Mouse");
-    addbar.append(&addkey);addbar.append(&addmouse);left.append(&addbar);
+    let addbar=GtkBox::new(Orientation::Horizontal,5);
+    let add_key_tap=Button::with_label("+ Key TAP");
+    let add_key_hold=Button::with_label("+ Key HOLD");
+    let add_mouse_tap=Button::with_label("+ Mouse TAP");
+    let add_mouse_hold=Button::with_label("+ Mouse HOLD");
+    addbar.append(&add_key_tap);addbar.append(&add_key_hold);
+    addbar.append(&add_mouse_tap);addbar.append(&add_mouse_hold);
+    left.append(&addbar);
     let bindings_scroll=ScrolledWindow::new();bindings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
     bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(false);
     addbar.append(&Button::with_label("Bindings below"));
@@ -1044,10 +1080,21 @@ fn build_ui(app:&Application){
     let ui2=ui.clone();save.connect_clicked(move |_|match save_current(&ui2){Ok(())=>{rebuild_profiles(&ui2);set_status(&ui2,"Saved ✓")},Err(e)=>set_status(&ui2,&format!("Save failed: {e}"))});
     let ui2=ui.clone();apply.connect_clicked(move |_|apply_and_run(&ui2));
     let ui2=ui.clone();validate.connect_clicked(move |_|validate_current(&ui2));
-    let ui2=ui.clone();refresh_dev.connect_clicked(move |_|sync_form(&ui2));
+    let ui2=ui.clone();refresh_dev.connect_clicked(move |_|{
+        let cfg=ui2.state.borrow().cfg.clone();
+        fill_devices(&ui2.keyboard,&cfg.devices.keyboard,false);
+        fill_devices(&ui2.mouse,&cfg.devices.mouse,true);
+        set_status(&ui2,"Input devices refreshed");
+    });
 
-    let ui2=ui.clone();addkey.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::KeyboardTap));
-    let ui2=ui.clone();addmouse.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::MouseHold));
+    let ui2=ui.clone();free_fire_btn.connect_clicked(move |_|apply_preset(&ui2,ShooterPreset::FreeFire));
+    let ui2=ui.clone();fps_btn.connect_clicked(move |_|apply_preset(&ui2,ShooterPreset::Fps));
+    let ui2=ui.clone();minimal_btn.connect_clicked(move |_|apply_preset(&ui2,ShooterPreset::Minimal));
+
+    let ui2=ui.clone();add_key_tap.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::KeyboardTap));
+    let ui2=ui.clone();add_key_hold.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::KeyboardHold));
+    let ui2=ui.clone();add_mouse_tap.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::MouseTap));
+    let ui2=ui.clone();add_mouse_hold.connect_clicked(move |_|open_binding_dialog_inner(&ui2,None,EditType::MouseHold));
 
     app_window.present();
 }
