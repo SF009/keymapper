@@ -4,9 +4,8 @@
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap};
 use gtk4::prelude::*;
-use gtk4::gio::prelude::*;
 use gtk4::{
-    cairo, gio, glib, gdk, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
+    cairo, glib, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
     ComboBoxText, Dialog, DrawingArea, Entry, EventControllerKey, Frame, GestureClick, GestureDrag,
     Grid, Label, ListBox, ListBoxRow, Orientation, Paned, PolicyType, ScrolledWindow, Separator,
     SpinButton,
@@ -314,7 +313,7 @@ fn fill_devices(combo:&ComboBoxText,selected:&Option<String>,mouse:bool){
         combo.append(Some(&id),&label);
     }
     match selected{
-        Some(s)=>combo.set_active_id(Some(s)),
+        Some(s)=>{combo.set_active_id(Some(s));},
         None=>{combo.set_active(Some(0));},
     }
 }
