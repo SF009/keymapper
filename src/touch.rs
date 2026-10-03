@@ -24,7 +24,7 @@ pub struct Mapper{cfg:Arc<Config>,pipe:Pipe,slots:[C;16],next:i32,mx:f32,my:f32,
 impl Mapper{
  pub fn new(cfg:Config)->Result<Self,Box<dyn Error>>{let mut p=Pipe::new(cfg.touch_fifo());let _=p.connect();Ok(Self{cfg:Arc::new(cfg),pipe:p,slots:[C{down:false};16],next:1,mx:0.5,my:0.5,aim:false,keys:[false;512]})}
  pub fn config(&self)->&Config{&self.cfg}
- fn out(&mut self,e:&[(u16,u16,i32)]){if self.pipe.f.is_none(){let _=self.pipe.connect()}let _=self.pipe.send(e)}
+ fn out(&mut self,e:&[(u16,u16,i32)]){if self.pipe.f.is_none(){let _=self.pipe.connect();}let _=self.pipe.send(e);}
  fn xy(&self,x:f32,y:f32)->(i32,i32){((x.clamp(0.,1.)*(self.cfg.display.width-1)as f32).round()as i32,(y.clamp(0.,1.)*(self.cfg.display.height-1)as f32).round()as i32)}
  fn down(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16{return}let(x,y)=self.xy(x,y);let id=self.next;self.next=self.next.wrapping_add(1);self.slots[i]=C{down:true};self.out(&[(ABS,SLOT,s as i32),(ABS,ID,id),(ABS,X,x),(ABS,Y,y),(ABS,MAJOR,8),(ABS,MINOR,8),(ABS,PRESS,80),(KEY,BTN_TOUCH,1),(SYN,0,0)])}
  fn mv(&mut self,s:u8,x:f32,y:f32){let i=s as usize;if i>=16||!self.slots[i].down{return}let(x,y)=self.xy(x,y);self.out(&[(ABS,SLOT,s as i32),(ABS,X,x),(ABS,Y,y),(ABS,PRESS,80),(SYN,0,0)])}
