@@ -1,19 +1,122 @@
 use crate::touch::Mapper;
 use evdev::{Device,EventSummary,KeyCode,RelativeAxisCode};
-use std::{error::Error,sync::{Arc,Mutex},thread,time::Duration};
+use std::{
+    error::Error,
+    sync::{
+        atomic::{AtomicBool,Ordering},
+        Arc,Mutex,
+    },
+    thread,
+    time::Duration,
+};
 
-#[derive(Clone,Copy)]pub enum InputKind{Keyboard,Mouse}
-pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>)->Result<(),Box<dyn Error>>{
- thread::Builder::new().name("wd-input".into()).spawn(move||{
-  let mut d=match Device::open(&path){Ok(x)=>x,Err(e)=>{eprintln!("open {path}: {e}");return}};
-  if mapper.lock().unwrap().config().performance.grab{let _=d.grab();}
-  loop{match d.fetch_events(){Ok(es)=>for e in es{let mut m=mapper.lock().unwrap();match(kind,e.destructure()){
-   (InputKind::Keyboard,EventSummary::Key(_,c,v))=>m.key(c.0,v),
-   (InputKind::Mouse,EventSummary::RelativeAxis(_,c,v))=>{if c==RelativeAxisCode::REL_X{m.mouse(v,0)}else if c==RelativeAxisCode::REL_Y{m.mouse(0,v)}}
-   (InputKind::Mouse,EventSummary::Key(_,c,v))=>m.button(c.0,v),_=>{}
-  }},Err(_)=>thread::sleep(Duration::from_millis(1))}}
- })?;Ok(())
+const MAX_INPUT_CODE:usize=1024;
+
+#[derive(Clone,Copy)]
+pub enum InputKind{Keyboard,Mouse}
+
+pub struct RuntimeControl{
+    pub mouse_locked:AtomicBool,
 }
+impl RuntimeControl{
+    pub fn new(locked:bool)->Arc<Self>{Arc::new(Self{mouse_locked:AtomicBool::new(locked)})}
+}
+
+pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->Result<(),Box<dyn Error>>{
+    thread::Builder::new().name(match kind{InputKind::Keyboard=>"wd-keyboard",InputKind::Mouse=>"wd-mouse"}.into()).spawn(move||{
+        let mut d=match Device::open(&path){
+            Ok(x)=>x,
+            Err(e)=>{eprintln!("open {path}: {e}");return}
+        };
+        let grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
+        let toggle=mapper.lock().ok().and_then(|m|key_code(&m.config().performance.mouse_toggle_key).ok());
+
+        match kind{
+            InputKind::Keyboard=>{
+                if grab{let _=d.grab();}
+                loop{
+                    match d.fetch_events(){
+                        Ok(events)=>{
+                            let mut m=mapper.lock().unwrap();
+                            for e in events{
+                                if let EventSummary::Key(_,c,v)=e.destructure(){
+                                    if Some(c.0)==toggle && v==1{
+                                        let next=!control.mouse_locked.load(Ordering::Acquire);
+                                        control.mouse_locked.store(next,Ordering::Release);
+                                        continue;
+                                    }
+                                    m.key(c.0,v);
+                                }
+                            }
+                        }
+                        Err(_)=>thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+            }
+            InputKind::Mouse=>{
+                let mut locked=control.mouse_locked.load(Ordering::Acquire);
+                if grab && locked{
+                    if let Err(e)=d.grab(){eprintln!("mouse grab failed for {path}: {e}");locked=false;}
+                }
+                {
+                    let mut m=mapper.lock().unwrap();
+                    m.set_mouse_lock(locked);
+                }
+                loop{
+                    let desired=control.mouse_locked.load(Ordering::Acquire);
+                    if desired!=locked{
+                        let ok=if grab{
+                            if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
+                        }else{true};
+                        if ok{
+                            locked=desired;
+                            mapper.lock().unwrap().set_mouse_lock(locked);
+                        }
+                    }
+                    match d.fetch_events(){
+                        Ok(events)=>{
+                            if !locked{continue}
+                            let mut m=mapper.lock().unwrap();
+                            let mut dx=0i32;
+                            let mut dy=0i32;
+                            for e in events{
+                                match e.destructure(){
+                                    EventSummary::RelativeAxis(_,c,v)=>{
+                                        if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
+                                        else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
+                                    }
+                                    EventSummary::Key(_,c,v)=>{
+                                        if dx!=0||dy!=0{m.mouse(dx,dy);dx=0;dy=0;}
+                                        m.button(c.0,v);
+                                    }
+                                    _=>{}
+                                }
+                            }
+                            if dx!=0||dy!=0{m.mouse(dx,dy);}
+                        }
+                        Err(_)=>thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+            }
+        }
+    })?;
+    Ok(())
+}
+
+#[derive(Clone,Copy,Debug)]
+pub enum KeyAction{
+    Joystick,
+    Tap{slot:u8,x:f32,y:f32},
+    Hold{slot:u8,x:f32,y:f32},
+}
+
+#[derive(Clone,Copy,Debug)]
+pub enum MouseAction{
+    Aim,
+    Tap{slot:u8,x:f32,y:f32},
+    Hold{slot:u8,x:f32,y:f32},
+}
+
 pub fn key_code(s:&str)->Result<u16,Box<dyn Error>>{
  let v=match s.to_ascii_uppercase().as_str(){
  "A"=>KeyCode::KEY_A.0,"B"=>KeyCode::KEY_B.0,"C"=>KeyCode::KEY_C.0,"D"=>KeyCode::KEY_D.0,
