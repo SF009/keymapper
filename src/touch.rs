@@ -70,7 +70,7 @@ impl Pipe{
                 let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            if pipe_write_bounded(f.as_raw_fd(),&v).is_err(){self.f=None;}
+            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
             return;
         }
 
@@ -82,7 +82,7 @@ impl Pipe{
             used+=size;
         }
 
-        if pipe_write_bounded(f.as_raw_fd(),&buf[..used]).is_err(){self.f=None;}
+        match pipe_write_bounded(f.as_raw_fd(),&buf[..used]){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
     }
 }
 
