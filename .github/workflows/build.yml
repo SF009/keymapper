@@ -1,0 +1,18 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cargo-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK4 development files
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-4-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check
+        run: cargo check --all-targets
+      - name: Format
+        run: cargo fmt --all -- --check
