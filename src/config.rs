@@ -52,6 +52,9 @@ impl Config{
  pub fn validate(&self)->Result<(),Box<dyn Error>>{
   if self.display.width<=0||self.display.height<=0{return Err("invalid display size".into())}
   if self.display.width>16384||self.display.height>16384{return Err("display size is too large".into())}
+  if let (Some(k),Some(m))=(&self.devices.keyboard,&self.devices.mouse){
+   if !k.is_empty()&&!m.is_empty()&&k==m{return Err("keyboard and mouse cannot use the same evdev device".into())}
+  }
   if let Some(j)=&self.joystick{
    for k in [&j.up,&j.down,&j.left,&j.right]{crate::input::key_code(k)?;}
    if !(0.0..=1.0).contains(&j.center_x)||!(0.0..=1.0).contains(&j.center_y)||j.radius<=0.0||j.radius>1.0{return Err("invalid joystick".into())}
@@ -71,7 +74,7 @@ impl Config{
    reserve(a.slot)?;
    crate::input::button_code(&a.button)?;
    if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.sensitivity>100.0{return Err("invalid aim".into())}
-   match a.mode.to_ascii_lowercase().as_str(){"touch"|"relative"=>{},_=>return Err("aim mode must be touch or relative".into())}
+   match a.mode.trim().to_ascii_lowercase().as_str(){"touch"|"relative"=>{},_=>return Err("aim mode must be touch or relative".into())}
   }
   for x in &self.taps{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard tap".into())}}
   for x in &self.holds{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard hold".into())}}
