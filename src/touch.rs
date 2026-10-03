@@ -224,6 +224,8 @@ impl Mapper{
 
     pub fn config(&self)->&Config{&self.cfg}
 
+    pub fn is_mouse_locked(&self)->bool{self.mouse_locked}
+
     pub fn set_mouse_lock(&mut self,locked:bool){
         if self.mouse_locked==locked{return}
         self.mouse_locked=locked;
