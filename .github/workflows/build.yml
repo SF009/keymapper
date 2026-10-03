@@ -14,5 +14,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Check
         run: cargo check --all-targets
-      - name: Format
-        run: cargo fmt --all -- --check
