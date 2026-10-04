@@ -151,7 +151,7 @@ Waydroid's modern hardware composer also has an Android pointer-capture path tha
 - normalized coordinates
 - no screenshots or OCR
 - EVIOCGRAB mouse/keyboard capture when enabled
-- runtime mouse lock toggle: F8 by default; unlocking releases active aim/fire touch slots
+- runtime mouse lock toggle: F8 by default; **mouse lock is off by default** so starting the daemon never captures the desktop cursor unexpectedly; locking releases active aim/fire touch slots on unlock
 - relative mouse motion is batched per evdev read before being written to Android
 - conflict validation prevents ambiguous physical-input ownership
 
