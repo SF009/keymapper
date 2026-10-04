@@ -96,7 +96,7 @@ impl Pipe{
                 let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            match pipe_write_bounded(f.as_raw_fd(),&v,self.write_retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
+            match pipe_write_bounded(f.as_raw_fd(),&v,retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
             return;
         }
 
@@ -108,7 +108,7 @@ impl Pipe{
             used+=size;
         }
 
-        match pipe_write_bounded(f.as_raw_fd(),&buf[..used],self.write_retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
+        match pipe_write_bounded(f.as_raw_fd(),&buf[..used],retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
     }
 }
 
