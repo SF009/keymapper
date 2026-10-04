@@ -24,6 +24,24 @@ impl RuntimeControl{
         if fd<0{return Err(io::Error::last_os_error())}
         Ok(Arc::new(Self{mouse_locked:AtomicBool::new(locked),mouse_event:unsafe{OwnedFd::from_raw_fd(fd)}}))
     }
+    pub fn set_locked(&self,locked:bool,allow_lock:bool)->bool{
+        if locked&&!allow_lock{return false}
+        self.mouse_locked.store(locked,Ordering::Release);
+        true
+    }
+
+    pub fn toggle(&self,allow_lock:bool)->Option<bool>{
+        let mut current=self.mouse_locked.load(Ordering::Acquire);
+        loop{
+            let next=!current;
+            if next&&!allow_lock{return None}
+            match self.mouse_locked.compare_exchange(current,next,Ordering::AcqRel,Ordering::Acquire){
+                Ok(_)=>return Some(next),
+                Err(actual)=>current=actual,
+            }
+        }
+    }
+
     pub fn notify_mouse(&self){
         let value:libc::c_ulonglong=1;
         unsafe{
