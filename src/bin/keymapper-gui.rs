@@ -3,7 +3,7 @@
 #[path="../touch.rs"] mod touch;
 #[path="../control.rs"] mod control;
 
-use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap};
+use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap,TouchSettings};
 use gtk4::prelude::*;
 use gtk4::{
     cairo, glib, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
@@ -55,7 +55,10 @@ struct Ui {
     aim_y:SpinButton,
     aim_sensitivity:SpinButton,
     aim_slot:SpinButton,
+    aim_invert_x:CheckButton,
     aim_invert_y:CheckButton,
+    aim_scale_x:SpinButton,
+    aim_scale_y:SpinButton,
     joy_enabled:CheckButton,
     joy_up:Entry,
     joy_down:Entry,
@@ -65,8 +68,16 @@ struct Ui {
     joy_y:SpinButton,
     joy_radius:SpinButton,
     joy_slot:SpinButton,
+    joy_normalize:CheckButton,
     grab:CheckButton,
     realtime:CheckButton,
+    realtime_priority:SpinButton,
+    fifo_write_retries:SpinButton,
+    fifo_write_wait:SpinButton,
+    fifo_reconnect:SpinButton,
+    touch_pressure:SpinButton,
+    touch_major:SpinButton,
+    touch_minor:SpinButton,
     mouse_lock:CheckButton,
     mouse_toggle:Entry,
     runtime_status:Label,
@@ -91,11 +102,11 @@ fn shooter_profile(base:&Config)->Config{
     let mut cfg=base.clone();
     cfg.joystick=Some(Joystick{
         up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-        center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+        center_x:0.15,center_y:0.76,radius:0.085,normalize_diagonal:true,slot:0,
     });
     cfg.aim=Some(Aim{
         button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,
-        sensitivity:2.0,slot:1,invert_y:false,mode:"relative".into(),
+        sensitivity:2.0,slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
     });
     cfg
 }
@@ -199,11 +210,11 @@ fn default_config()->Config{
         devices:Devices{keyboard:None,mouse:None},
         joystick:Some(Joystick{
             up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-            center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+            center_x:0.15,center_y:0.76,radius:0.085,normalize_diagonal:true,slot:0,
         }),
         aim:Some(Aim{
             button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
-            slot:1,invert_y:false,mode:"relative".into(),
+            slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
         }),
         taps:vec![
             Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
@@ -212,7 +223,7 @@ fn default_config()->Config{
         holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
         mouse_taps:Vec::new(),
         mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
-        performance:Performance{grab:true,realtime:true,mouse_lock:false,mouse_toggle_key:"F8".into()},
+        performance:Performance{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25},touch:TouchSettings::default(),
     }
 }
 
@@ -708,16 +719,24 @@ fn sync_form(ui:&Ui){
         ui.aim_mode.set_active_id(Some(a.mode.as_str()));
         ui.aim_x.set_value(a.center_x as f64);ui.aim_y.set_value(a.center_y as f64);
         ui.aim_sensitivity.set_value(a.sensitivity as f64);ui.aim_slot.set_value(a.slot as f64);
-        ui.aim_invert_y.set_active(a.invert_y);
+        ui.aim_invert_x.set_active(a.invert_x);ui.aim_invert_y.set_active(a.invert_y);
+        ui.aim_scale_x.set_value(a.scale_x as f64);ui.aim_scale_y.set_value(a.scale_y as f64);
     }
     ui.joy_enabled.set_active(st.cfg.joystick.is_some());
     if let Some(j)=&st.cfg.joystick{
         ui.joy_up.set_text(&j.up);ui.joy_down.set_text(&j.down);ui.joy_left.set_text(&j.left);ui.joy_right.set_text(&j.right);
         ui.joy_x.set_value(j.center_x as f64);ui.joy_y.set_value(j.center_y as f64);
-        ui.joy_radius.set_value(j.radius as f64);ui.joy_slot.set_value(j.slot as f64);
+        ui.joy_radius.set_value(j.radius as f64);ui.joy_slot.set_value(j.slot as f64);ui.joy_normalize.set_active(j.normalize_diagonal);
     }
     ui.grab.set_active(st.cfg.performance.grab);
     ui.realtime.set_active(st.cfg.performance.realtime);
+    ui.realtime_priority.set_value(st.cfg.performance.realtime_priority as f64);
+    ui.fifo_write_retries.set_value(st.cfg.performance.fifo_write_retries as f64);
+    ui.fifo_write_wait.set_value(st.cfg.performance.fifo_write_wait_ms as f64);
+    ui.fifo_reconnect.set_value(st.cfg.performance.fifo_reconnect_ms as f64);
+    ui.touch_pressure.set_value(st.cfg.touch.pressure as f64);
+    ui.touch_major.set_value(st.cfg.touch.major as f64);
+    ui.touch_minor.set_value(st.cfg.touch.minor as f64);
     ui.mouse_lock.set_active(st.cfg.performance.mouse_lock);
     ui.mouse_toggle.set_text(&st.cfg.performance.mouse_toggle_key);
     fill_devices(&ui.keyboard,&st.cfg.devices.keyboard,false);
@@ -732,6 +751,10 @@ fn sync_state_from_form(ui:&Ui){
     st.cfg.devices.mouse=ui.mouse.active_id().map(|x|x.to_string());
     st.cfg.performance.grab=ui.grab.is_active();
     st.cfg.performance.realtime=ui.realtime.is_active();
+    st.cfg.performance.realtime_priority=ui.realtime_priority.value().round() as i32;
+    st.cfg.performance.fifo_write_retries=ui.fifo_write_retries.value().round() as u8;
+    st.cfg.performance.fifo_write_wait_ms=ui.fifo_write_wait.value().round() as u64;
+    st.cfg.performance.fifo_reconnect_ms=ui.fifo_reconnect.value().round() as u64;
     st.cfg.performance.mouse_lock=ui.mouse_lock.is_active();
     st.cfg.performance.mouse_toggle_key=ui.mouse_toggle.text().trim().to_string();
 
@@ -740,7 +763,8 @@ fn sync_state_from_form(ui:&Ui){
             button:ui.aim_button.text().trim().to_string(),
             center_x:ui.aim_x.value() as f32,center_y:ui.aim_y.value() as f32,
             sensitivity:ui.aim_sensitivity.value() as f32,slot:ui.aim_slot.value() as u8,
-            invert_y:ui.aim_invert_y.is_active(),
+            invert_x:ui.aim_invert_x.is_active(),invert_y:ui.aim_invert_y.is_active(),
+            scale_x:ui.aim_scale_x.value() as f32,scale_y:ui.aim_scale_y.value() as f32,
             mode:ui.aim_mode.active_id().map(|x|x.to_string()).unwrap_or_else(||"touch".into()),
         });
     }else{st.cfg.aim=None;}
@@ -750,9 +774,12 @@ fn sync_state_from_form(ui:&Ui){
             up:ui.joy_up.text().trim().to_string(),down:ui.joy_down.text().trim().to_string(),
             left:ui.joy_left.text().trim().to_string(),right:ui.joy_right.text().trim().to_string(),
             center_x:ui.joy_x.value() as f32,center_y:ui.joy_y.value() as f32,
-            radius:ui.joy_radius.value() as f32,slot:ui.joy_slot.value() as u8,
+            radius:ui.joy_radius.value() as f32,normalize_diagonal:ui.joy_normalize.is_active(),slot:ui.joy_slot.value() as u8,
         });
     }else{st.cfg.joystick=None;}
+    st.cfg.touch.pressure=ui.touch_pressure.value().round() as i32;
+    st.cfg.touch.major=ui.touch_major.value().round() as i32;
+    st.cfg.touch.minor=ui.touch_minor.value().round() as i32;
     st.dirty=true;
 }
 
@@ -872,7 +899,7 @@ WantedBy=graphical-session.target
 "#)
 }
 
-fn install_runtime()->Result<(),String>{
+fn install_runtime()->Result<String,String>{
     fs::create_dir_all(user_bin_dir()).map_err(|e|e.to_string())?;
     fs::create_dir_all(user_service_dir()).map_err(|e|e.to_string())?;
 
@@ -913,7 +940,7 @@ fn install_runtime()->Result<(),String>{
     if !reload.status.success(){
         return Err(String::from_utf8_lossy(&reload.stderr).trim().to_string())
     }
-    Ok(())
+    Ok("Runtime installed / repaired ✓".into())
 }
 
 fn systemctl_user(args:&[&str])->Result<String,String>{
@@ -1301,11 +1328,15 @@ fn build_ui(app:&Application){
     let aim_enabled=CheckButton::with_label("Enable aim");
     let aim_button=Entry::new();
     let aim_mode=ComboBoxText::new();aim_mode.append(Some("touch"),"Touch / absolute");aim_mode.append(Some("relative"),"Relative / FPS");let aim_x=make_spin(0.,1.,0.01,3);let aim_y=make_spin(0.,1.,0.01,3);
-    let aim_sensitivity=make_spin(0.01,20.,0.05,2);let aim_slot=make_spin(0.,15.,1.,0);let aim_invert_y=CheckButton::with_label("Invert Y");
+    let aim_sensitivity=make_spin(0.01,20.,0.05,2);let aim_slot=make_spin(0.,15.,1.,0);
+    let aim_invert_x=CheckButton::with_label("Invert X");let aim_invert_y=CheckButton::with_label("Invert Y");
+    let aim_scale_x=make_spin(0.01,20.,0.05,2);let aim_scale_y=make_spin(0.01,20.,0.05,2);
     let joy_enabled=CheckButton::with_label("Enable joystick");
     let joy_up=Entry::new();let joy_down=Entry::new();let joy_left=Entry::new();let joy_right=Entry::new();
-    let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);
+    let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);let joy_normalize=CheckButton::with_label("Normalize diagonals");
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
+    let realtime_priority=make_spin(1.,99.,1.,0);let fifo_write_retries=make_spin(1.,16.,1.,0);let fifo_write_wait=make_spin(0.,20.,1.,0);let fifo_reconnect=make_spin(5.,5000.,5.,0);
+    let touch_pressure=make_spin(1.,255.,1.,0);let touch_major=make_spin(1.,255.,1.,0);let touch_minor=make_spin(1.,255.,1.,0);
     let mouse_lock=CheckButton::with_label("Lock mouse on start");
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
     let runtime_status=Label::new(Some("Service: Not installed"));
@@ -1317,7 +1348,7 @@ fn build_ui(app:&Application){
     input_access.set_wrap(true);
 
     let bindings_box=GtkBox::new(Orientation::Vertical,6);
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_y:aim_invert_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),grab:grab.clone(),realtime:realtime.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_x:aim_invert_x.clone(),aim_invert_y:aim_invert_y.clone(),aim_scale_x:aim_scale_x.clone(),aim_scale_y:aim_scale_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),joy_normalize:joy_normalize.clone(),grab:grab.clone(),realtime:realtime.clone(),realtime_priority:realtime_priority.clone(),fifo_write_retries:fifo_write_retries.clone(),fifo_write_wait:fifo_write_wait.clone(),fifo_reconnect:fifo_reconnect.clone(),touch_pressure:touch_pressure.clone(),touch_major:touch_major.clone(),touch_minor:touch_minor.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -1375,24 +1406,29 @@ fn build_ui(app:&Application){
     aim.append(&aim_enabled);
     let ag=Grid::new();ag.set_row_spacing(7);ag.set_column_spacing(8);
     form_row(&ag,0,"Button",&aim_button);form_row(&ag,1,"Mode",&aim_mode);form_row(&ag,2,"Center X",&aim_x);form_row(&ag,3,"Center Y",&aim_y);
-    form_row(&ag,4,"Sensitivity",&aim_sensitivity);form_row(&ag,5,"Slot",&aim_slot);
-    ag.attach(&aim_invert_y,1,6,1,1);aim.append(&ag);
+    form_row(&ag,4,"Sensitivity",&aim_sensitivity);form_row(&ag,5,"Slot",&aim_slot);form_row(&ag,6,"X scale",&aim_scale_x);form_row(&ag,7,"Y scale",&aim_scale_y);
+    ag.attach(&aim_invert_x,1,8,1,1);ag.attach(&aim_invert_y,1,9,1,1);aim.append(&ag);
 
     let joystick=add_section(&right,"Joystick");
     joystick.append(&joy_enabled);
     let jg=Grid::new();jg.set_row_spacing(7);jg.set_column_spacing(8);
     form_row(&jg,0,"Up",&joy_up);form_row(&jg,1,"Down",&joy_down);form_row(&jg,2,"Left",&joy_left);form_row(&jg,3,"Right",&joy_right);
     form_row(&jg,4,"Center X",&joy_x);form_row(&jg,5,"Center Y",&joy_y);form_row(&jg,6,"Radius",&joy_radius);form_row(&jg,7,"Slot",&joy_slot);
-    joystick.append(&jg);
+    jg.attach(&joy_normalize,1,8,1,1);joystick.append(&jg);
 
     let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);
     let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);
     let toggle_box=GtkBox::new(Orientation::Horizontal,5);
     let capture_toggle=Button::with_label("Capture");
     toggle_box.append(&mouse_toggle);toggle_box.append(&capture_toggle);
-    form_row(&mg,0,"Lock toggle key",&toggle_box);perf.append(&mg);
+    form_row(&mg,0,"Lock toggle key",&toggle_box);form_row(&mg,1,"RT priority",&realtime_priority);form_row(&mg,2,"FIFO retries",&fifo_write_retries);form_row(&mg,3,"FIFO wait (ms)",&fifo_write_wait);form_row(&mg,4,"FIFO reconnect (ms)",&fifo_reconnect);perf.append(&mg);
     let help=Label::new(Some("The toggle key is reserved for mouse capture and cannot also be a gameplay binding."));
     help.set_wrap(true);help.set_halign(gtk4::Align::Start);perf.append(&help);
+
+    let touch=add_section(&right,"Touch input tuning");
+    let tg=Grid::new();tg.set_row_spacing(7);tg.set_column_spacing(8);
+    form_row(&tg,0,"Pressure",&touch_pressure);form_row(&tg,1,"Major",&touch_major);form_row(&tg,2,"Minor",&touch_minor);touch.append(&tg);
+    let touch_help=Label::new(Some("Advanced Android touch-device parameters. Defaults are conservative; change them only for compatibility tuning."));touch_help.set_wrap(true);touch_help.set_halign(gtk4::Align::Start);touch.append(&touch_help);
 
     let runtime=add_section(&right,"Runtime");
     runtime.append(&runtime_status);runtime.append(&lock_status);
