@@ -108,9 +108,8 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 for e in events{
                     if let EventSummary::Key(_,c,v)=e.destructure(){
                         if Some(c.0)==toggle && v==1{
-                            let next=!control.mouse_locked.load(Ordering::Acquire);
-                            control.mouse_locked.store(next,Ordering::Release);
-                            control.notify_mouse();
+                            let can_grab=m.config().performance.grab;
+                            if control.toggle(can_grab).is_some(){control.notify_mouse();}
                             continue;
                         }
                         m.key(c.0,v);
