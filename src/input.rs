@@ -261,6 +261,90 @@ pub enum MouseAction{
     Hold{slot:u8,x:f32,y:f32},
 }
 
+#[derive(Clone,Debug)]
+pub struct InputDeviceInfo{
+    pub path:String,
+    pub name:String,
+    pub is_keyboard:bool,
+    pub is_mouse:bool,
+    pub score:i32,
+}
+
+fn inspect_device(path:&std::path::Path)->Option<InputDeviceInfo>{
+    let d=Device::open(path).ok()?;
+    let keys=d.supported_keys();
+    let rel=d.supported_relative_axes();
+    let is_mouse=keys.as_ref().map(|k|
+        k.contains(KeyCode::BTN_LEFT)||
+        k.contains(KeyCode::BTN_RIGHT)||
+        k.contains(KeyCode::BTN_MIDDLE)
+    ).unwrap_or(false) && rel.as_ref().map(|a|
+        a.contains(RelativeAxisCode::REL_X)||
+        a.contains(RelativeAxisCode::REL_Y)
+    ).unwrap_or(false);
+    let is_keyboard=keys.as_ref().map(|k|
+        k.contains(KeyCode::KEY_A)||
+        k.contains(KeyCode::KEY_W)||
+        k.contains(KeyCode::KEY_ENTER)||
+        k.contains(KeyCode::KEY_ESC)
+    ).unwrap_or(false);
+
+    if !is_mouse&&!is_keyboard{return None}
+
+    let name=d.name().unwrap_or("input").to_string();
+    let lower=name.to_ascii_lowercase();
+    let mut score=0;
+    if !lower.contains("virtual"){score+=40}
+    if !lower.contains("ydotool"){score+=40}
+    if !lower.contains("keyd"){score+=40}
+    if is_mouse{
+        if lower.contains("usb"){score+=25}
+        if lower.contains("optical"){score+=15}
+        if lower.contains("touchpad"){score-=35}
+    }
+    if is_keyboard{
+        if lower.contains("at translated"){score+=25}
+        if lower.contains("keyboard"){score+=15}
+    }
+
+    Some(InputDeviceInfo{
+        path:path.to_string_lossy().to_string(),
+        name,
+        is_keyboard,
+        is_mouse,
+        score,
+    })
+}
+
+pub fn list_input_devices()->Vec<InputDeviceInfo>{
+    let mut out=Vec::<InputDeviceInfo>::new();
+    let mut seen=std::collections::HashSet::<std::path::PathBuf>::new();
+
+    if let Ok(dir)=std::fs::read_dir("/dev/input/by-id"){
+        let mut stable:Vec<std::path::PathBuf>=dir.flatten().map(|e|e.path()).collect();
+        stable.sort();
+        for p in stable{
+            if !p.is_symlink(){continue}
+            if let Some(info)=inspect_device(&p){
+                let canonical=p.canonicalize().unwrap_or_else(|_|p.clone());
+                if seen.insert(canonical){out.push(info);}
+            }
+        }
+    }
+
+    for (path,_) in evdev::enumerate(){
+        let canonical=path.canonicalize().unwrap_or_else(|_|path.clone());
+        if seen.contains(&canonical){continue}
+        if let Some(info)=inspect_device(&path){
+            seen.insert(canonical);
+            out.push(info);
+        }
+    }
+
+    out.sort_by(|a,b|b.score.cmp(&a.score).then_with(||a.path.cmp(&b.path)));
+    out
+}
+
 pub fn key_code(s:&str)->Result<u16,Box<dyn Error>>{
  let v=match s.to_ascii_uppercase().as_str(){
  "A"=>KeyCode::KEY_A.0,"B"=>KeyCode::KEY_B.0,"C"=>KeyCode::KEY_C.0,"D"=>KeyCode::KEY_D.0,
