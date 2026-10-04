@@ -21,7 +21,7 @@ use std::{
     process::Command,
     rc::Rc,
     sync::mpsc,
-    time::Duration,
+    time::{Duration,SystemTime,UNIX_EPOCH},
 };
 
 const APP_ID:&str="io.sf009.WaydroidKeymapper";
@@ -264,7 +264,7 @@ fn load_profile(path:&Path)->Result<Config,Box<dyn Error>>{
 fn save_profile(path:&Path,cfg:&Config)->Result<(),Box<dyn Error>>{
     cfg.validate()?;
     if let Some(parent)=path.parent(){fs::create_dir_all(parent)?}
-    let tmp=path.with_extension("toml.tmp");
+    let tmp=temp_path(path,"save");
     fs::write(&tmp,toml::to_string_pretty(cfg)?)?;
     fs::rename(tmp,path)?;
     Ok(())
@@ -283,6 +283,13 @@ fn safe_profile_name(name:&str)->Option<String>{
 }
 
 fn clamp(v:f64)->f32{v.clamp(0.,1.) as f32}
+
+fn temp_path(path:&Path,tag:&str)->PathBuf{
+    let pid=std::process::id();
+    let nanos=SystemTime::now().duration_since(UNIX_EPOCH).map(|d|d.as_nanos()).unwrap_or(0);
+    let name=path.file_name().and_then(|x|x.to_str()).unwrap_or("tmp");
+    path.with_file_name(format!(".{name}.{tag}.{pid}.{nanos}.tmp"))
+}
 
 fn add_margins<W:gtk4::prelude::WidgetExt>(w:&W,m:i32){
     w.set_margin_top(m);
@@ -813,7 +820,7 @@ fn desktop_file_path()->PathBuf{home_dir().join(".local/share/applications/waydr
 
 fn install_user_executable(src:&Path,dst:&Path)->Result<(),String>{
     if src.canonicalize().ok()==dst.canonicalize().ok(){return Ok(())}
-    let tmp=dst.with_extension("tmp");
+    let tmp=temp_path(dst,"install");
     fs::copy(src,&tmp).map_err(|e|format!("install {}: {e}",dst.display()))?;
     let mut perms=fs::metadata(&tmp).map_err(|e|e.to_string())?.permissions();
     perms.set_mode(0o755);
@@ -835,7 +842,7 @@ fn udev_rules_text()->&'static str{
 fn install_input_permissions()->Result<String,String>{
     let dir=home_dir().join(".config/waydroid-keymapper");
     fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-    let tmp=dir.join("99-waydroid-keymapper.rules.tmp");
+    let tmp=temp_path(&dir,"udev");
     fs::write(&tmp,udev_rules_text()).map_err(|e|format!("write temporary udev rules: {e}"))?;
 
     let install=Command::new("pkexec")
@@ -919,7 +926,7 @@ fn install_runtime()->Result<String,String>{
         let seed=profiles_dir().join("default.toml");
         if seed.is_file(){
             if let Some(parent)=active_config_path().parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
-            let tmp=active_config_path().with_extension("toml.tmp");
+            let tmp=temp_path(&active_config_path(),"active");
             fs::copy(&seed,&tmp).map_err(|e|format!("seed active config: {e}"))?;
             fs::rename(&tmp,active_config_path()).map_err(|e|format!("activate default config: {e}"))?;
         }
@@ -927,12 +934,12 @@ fn install_runtime()->Result<String,String>{
 
     if let Some(parent)=desktop_file_path().parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
     let desktop=desktop_file_path();
-    let desktop_tmp=desktop.with_extension("desktop.tmp");
+    let desktop_tmp=temp_path(&desktop,"desktop");
     fs::write(&desktop_tmp,desktop_entry()).map_err(|e|format!("write desktop launcher: {e}"))?;
     fs::rename(&desktop_tmp,&desktop).map_err(|e|format!("activate desktop launcher: {e}"))?;
 
     let unit=user_service_dir().join(USER_SERVICE);
-    let tmp=unit.with_extension("tmp");
+    let tmp=temp_path(&unit,"unit");
     fs::write(&tmp,service_unit()).map_err(|e|format!("write service: {e}"))?;
     fs::rename(&tmp,&unit).map_err(|e|format!("activate service: {e}"))?;
 
