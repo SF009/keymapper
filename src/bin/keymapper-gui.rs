@@ -199,7 +199,7 @@ fn default_config()->Config{
         }),
         aim:Some(Aim{
             button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
-            slot:1,invert_y:false,mode:"touch".into(),
+            slot:1,invert_y:false,mode:"relative".into(),
         }),
         taps:vec![
             Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
@@ -753,7 +753,7 @@ fn install_user_executable(src:&Path,dst:&Path)->Result<(),String>{
 
 fn desktop_entry()->String{
     let exe=gui_install_path().to_string_lossy().replace('\\',"\\\\").replace(' ',"\\ ");
-    format!("[Desktop Entry]\\nType=Application\\nName=Waydroid Keymapper\\nComment=Low-latency Waydroid keyboard and mouse profile editor\\nExec={}\\nIcon=input-gaming\\nTerminal=false\\nCategories=Utility;Game;\\nKeywords=Waydroid;Android;Gaming;Keymapper;\\n",exe)
+    format!("[Desktop Entry]\nType=Application\nName=Waydroid Keymapper\nComment=Low-latency Waydroid keyboard and mouse profile editor\nExec={}\nIcon=input-gaming\nTerminal=false\nCategories=Utility;Game;\nKeywords=Waydroid;Android;Gaming;Keymapper;\n",exe)
 }
 
 fn udev_rules_text()->&'static str{
@@ -948,7 +948,7 @@ fn update_runtime_status(ui:&Ui){
         let st=ui.state.borrow();
         (st.cfg.devices.keyboard.clone(),st.cfg.devices.mouse.clone())
     };
-    ui.input_access.set_text(&format!("Keyboard: {}\\nMouse: {}",device_access(kbd),device_access(mouse)));
+    ui.input_access.set_text(&format!("Keyboard: {}\nMouse: {}",device_access(kbd),device_access(mouse)));
     match control::request("status"){
         Ok(reply)=>{
             let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
@@ -1008,7 +1008,14 @@ fn diagnostics(ui:&Ui){
 
 fn runtime_control(ui:&Ui,command:&str){
     match control::request(command){
-        Ok(reply)=>set_status(ui,&format!("Daemon: {reply}")),
+        Ok(reply)=>{
+            set_status(ui,&format!("Daemon: {reply}"));
+            // The command is asynchronous with respect to the mouse thread.
+            // Refresh once again shortly after the request so the GUI shows the
+            // actual kernel-grab state rather than only the requested state.
+            let ui2=ui.clone();
+            glib::timeout_add_local_once(Duration::from_millis(60),move||update_runtime_status(&ui2));
+        }
         Err(e)=>set_status(ui,&format!("Daemon control unavailable: {e}")),
     }
     update_runtime_status(ui);
@@ -1197,7 +1204,7 @@ fn build_ui(app:&Application){
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
     let runtime_status=Label::new(Some("Service: Not installed"));
     let lock_status=Label::new(Some("Mouse: offline"));
-    let input_access=Label::new(Some("Keyboard: checking…\\nMouse: checking…"));
+    let input_access=Label::new(Some("Keyboard: checking…\nMouse: checking…"));
     runtime_status.set_halign(gtk4::Align::Start);
     lock_status.set_halign(gtk4::Align::Start);
     input_access.set_halign(gtk4::Align::Start);
@@ -1296,10 +1303,12 @@ fn build_ui(app:&Application){
     rb0.append(&enable_btn);rb0.append(&disable_btn);runtime.append(&rb0);
     runtime.append(&diagnostics_btn);
     let rb2=GtkBox::new(Orientation::Horizontal,5);
-    let lock_btn=Button::with_label("🔒 Lock");
-    let unlock_btn=Button::with_label("🖱 Unlock");
+    let lock_btn=Button::with_label("🔒 Lock mouse");
+    let unlock_btn=Button::with_label("🖱 Unlock mouse");
     let toggle_btn=Button::with_label("Toggle");
     rb2.append(&lock_btn);rb2.append(&unlock_btn);rb2.append(&toggle_btn);runtime.append(&rb2);
+    let lock_help=Label::new(Some("When locked, GNOME no longer receives mouse events. Use the configured toggle key (default F8), or Ctrl+Alt+F12 as emergency unlock."));
+    lock_help.set_wrap(true);lock_help.set_halign(gtk4::Align::Start);runtime.append(&lock_help);
     let waydroid_state_label=Label::new(Some(&format!("Waydroid: {}",waydroid_state())));
     waydroid_state_label.set_halign(gtk4::Align::Start);runtime.append(&waydroid_state_label);
     let wb=GtkBox::new(Orientation::Horizontal,5);
