@@ -148,7 +148,6 @@ struct JoyRuntime{
 
 #[derive(Clone,Copy)]
 struct AimRuntime{
-    button:u16,
     center_x:f32,
     center_y:f32,
     sensitivity:f32,
@@ -204,7 +203,7 @@ impl Mapper{
             let button=button_code(&a.button).unwrap();
             mouse_actions[button as usize]=Some(MouseAction::Aim);
             AimRuntime{
-                button,center_x:a.center_x,center_y:a.center_y,
+                center_x:a.center_x,center_y:a.center_y,
                 sensitivity:a.sensitivity,slot:a.slot,invert_x:a.invert_x,invert_y:a.invert_y,
                 scale_x:a.scale_x,scale_y:a.scale_y,edge_margin:a.edge_margin,relative:a.mode.eq_ignore_ascii_case("relative"),
             }
