@@ -31,7 +31,10 @@ pub fn shutdown_requested()->bool{SHUTDOWN.load(Ordering::Acquire)}
 
 pub fn socket_path()->PathBuf{
     if let Some(dir)=env::var_os("XDG_RUNTIME_DIR"){
-        return PathBuf::from(dir).join("waydroid-keymapper.sock");
+        let dir=PathBuf::from(dir);
+        if dir.is_dir(){
+            return dir.join("waydroid-keymapper.sock");
+        }
     }
     home_dir().join(".cache/waydroid-keymapper/waydroid-keymapper.sock")
 }
