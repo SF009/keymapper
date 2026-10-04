@@ -60,9 +60,26 @@ fn main()->Result<(),Box<dyn Error>>{
  cfg.validate_runtime()?;
  let mapper=Arc::new(Mutex::new(Mapper::new(cfg.clone())?));
  let control=RuntimeControl::new(cfg.performance.mouse_lock)?;
- if let Some(d)=cfg.devices.keyboard.clone(){spawn_input(d,InputKind::Keyboard,mapper.clone(),control.clone())?}
- if let Some(d)=cfg.devices.mouse.clone(){spawn_input(d,InputKind::Mouse,mapper.clone(),control.clone())?}
- if let Err(e)=control::spawn_server(mapper.clone(),control.clone()){eprintln!("waydroid-keymapper: control socket unavailable: {e}");}
+
+ // Bind the control endpoint before touching any input device. This makes
+ // duplicate daemon instances fail before they can compete for evdev input.
+ if let Err(e)=control::spawn_server(mapper.clone(),control.clone()){
+  eprintln!("waydroid-keymapper: cannot start control server: {e}");
+  return Err(e.into())
+ }
+
+ if let Some(d)=cfg.devices.keyboard.clone(){
+  if let Err(e)=spawn_input(d,InputKind::Keyboard,mapper.clone(),control.clone()){
+   control::remove_socket();
+   return Err(e)
+  }
+ }
+ if let Some(d)=cfg.devices.mouse.clone(){
+  if let Err(e)=spawn_input(d,InputKind::Mouse,mapper.clone(),control.clone()){
+   control::remove_socket();
+   return Err(e)
+  }
+ }
  eprintln!("waydroid-keymapper: running");
  while !control::shutdown_requested(){thread::sleep(Duration::from_millis(200))}
  if let Ok(mut m)=mapper.lock(){
