@@ -106,7 +106,10 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     let mut alt_down=false;
 
     if grab{
-        if let Err(e)=d.grab(){eprintln!("waydroid-keymapper: keyboard grab failed for {path}: {e}");}
+        if let Err(e)=d.grab(){
+            eprintln!("waydroid-keymapper: keyboard grab failed for {path}: {e}");
+            return
+        }
     }
 
     loop{
