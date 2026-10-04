@@ -980,6 +980,49 @@ fn update_runtime_status(ui:&Ui){
     }
 }
 
+fn diagnostics(ui:&Ui){
+    sync_state_from_form(ui);
+    let cfg=ui.state.borrow().cfg.clone();
+    let mut issues=Vec::new();
+
+    if !cfg.conflicts().is_empty(){issues.push(format!("{} input conflict(s)",cfg.conflicts().len()));}
+    if let Err(e)=cfg.validate(){issues.push(format!("config: {e}"));}
+
+    if let Some(k)=cfg.devices.keyboard.clone(){
+        if let Err(e)=evdev::Device::open(&k){issues.push(format!("keyboard access: {e}"));}
+    }else{issues.push("keyboard device not selected".into());}
+
+    if let Some(m)=cfg.devices.mouse.clone(){
+        if let Err(e)=evdev::Device::open(&m){issues.push(format!("mouse access: {e}"));}
+    }else{issues.push("mouse device not selected".into());}
+
+    let touch=cfg.touch_fifo();
+    if !Path::new(&touch).exists(){issues.push(format!("touch FIFO missing: {touch}"));}
+    if cfg.aim.as_ref().is_some_and(|a|a.mode.eq_ignore_ascii_case("relative")){
+        let pointer=cfg.pointer_fifo();
+        if !Path::new(&pointer).exists(){issues.push(format!("pointer FIFO missing: {pointer}"));}
+    }
+
+    match control::request("ping"){
+        Ok(reply) if reply=="OK pong"=>{},
+        Ok(reply)=>issues.push(format!("daemon control: {reply}")),
+        Err(_)=>issues.push("daemon control socket offline".into()),
+    }
+
+    let service=runtime_service_state();
+    if service=="Failed"{issues.push("daemon service is failed".into());}
+
+    let waydroid=waydroid_state();
+    if waydroid=="Unavailable"{issues.push("Waydroid command unavailable".into());}
+
+    if issues.is_empty(){
+        set_status(ui,"Diagnostics: ALL CHECKS PASSED ✓");
+    }else{
+        set_status(ui,&format!("Diagnostics: {} issue(s) • {}",issues.len(),issues.join(" | ")));
+    }
+    update_runtime_status(ui);
+}
+
 fn runtime_control(ui:&Ui,command:&str){
     match control::request(command){
         Ok(reply)=>set_status(ui,&format!("Daemon: {reply}")),
@@ -1007,8 +1050,12 @@ fn waydroid_state()->String{
 }
 
 fn apply_and_run(ui:&Ui){
-    if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
     match save_current(ui){
+        Ok(())=>{},
+        Err(e)=>{set_status(ui,&format!("Save failed: {e}"));return}
+    }
+    if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
+    match Ok::<(),String>(()){
         Ok(())=>{
             let st=ui.state.borrow();
             let active=active_config_path();
@@ -1262,7 +1309,9 @@ fn build_ui(app:&Application){
     let start_btn=Button::with_label("Start");
     let stop_btn=Button::with_label("Stop");
     let restart_btn=Button::with_label("Restart");
+    let diagnostics_btn=Button::with_label("🔍 Diagnostics");
     rb1.append(&install_btn);rb1.append(&start_btn);rb1.append(&stop_btn);rb1.append(&restart_btn);runtime.append(&rb1);
+    runtime.append(&diagnostics_btn);
     let rb2=GtkBox::new(Orientation::Horizontal,5);
     let lock_btn=Button::with_label("🔒 Lock");
     let unlock_btn=Button::with_label("🖱 Unlock");
@@ -1359,6 +1408,8 @@ fn build_ui(app:&Application){
     if let Some(row)=profile_list.selected_row(){row.grab_focus();}
 
     attach_key_capture(&mouse_toggle,&capture_toggle,&status);
+
+    let ui2=ui.clone();diagnostics_btn.connect_clicked(move |_|diagnostics(&ui2));
 
     let ui2=ui.clone();install_btn.connect_clicked(move |_|{
         match install_runtime(){Ok(())=>set_status(&ui2,"Runtime installed/repaired ✓"),Err(e)=>set_status(&ui2,&format!("Runtime setup failed: {e}"))}
