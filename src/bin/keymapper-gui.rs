@@ -2403,20 +2403,9 @@ fn build_ui(app: &Application) {
     }
     {
         let ui_drag = ui.clone();
-        let ptn = pointer_to_norm.clone();
-        let drag_item = drag_item.clone();
+        let drag_item_update = drag_item.clone();
         drag.connect_drag_update(move |_, dx, dy| {
-            let Some(sel) = drag_item.get() else { return };
-            let (base_x, base_y) = {
-                let st = ui_drag.state.borrow();
-                selected_position(&st.cfg, sel).unwrap_or((0.5, 0.5))
-            };
-            let start = ptn(0.0, 0.0);
-            let current = ptn(dx, dy);
-            let scale_x = (current.0 - start.0).abs().max(0.0001);
-            let scale_y = (current.1 - start.1).abs().max(0.0001);
-            let nx = (base_x + (dx.signum() as f32) * scale_x).clamp(0.0, 1.0);
-            let ny = (base_y + (dy.signum() as f32) * scale_y).clamp(0.0, 1.0);
+            let Some(sel) = drag_item_update.get() else { return };
 
             // Recompute from actual widget dimensions instead of relying on the
             // absolute pointer position of the gesture.
@@ -2441,8 +2430,8 @@ fn build_ui(app: &Application) {
             ui_drag.canvas.queue_draw();
             selected_editor(&ui_drag);
         });
-        let drag_item = drag_item.clone();
-        drag.connect_drag_end(move |_, _, _| drag_item.set(None));
+        let drag_item_end = drag_item.clone();
+        drag.connect_drag_end(move |_, _, _| drag_item_end.set(None));
     }
     canvas.add_controller(drag);
 
@@ -2617,17 +2606,17 @@ fn build_ui(app: &Application) {
     {
         let armed = Rc::new(Cell::new(false));
         let armed_button = armed.clone();
-        let ui = ui.clone();
+        let ui_capture = ui.clone();
         capture_toggle.connect_clicked(move |_| {
             armed_button.set(true);
-            ui.mouse_toggle.grab_focus();
-            ui.status.set_text("Press the desired lock key…");
+            ui_capture.mouse_toggle.grab_focus();
+            ui_capture.status.set_text("Press the desired lock key…");
         });
 
         let controller = EventControllerKey::new();
         let armed_key = armed.clone();
         let entry = mouse_toggle.clone();
-        let ui = ui.clone();
+        let ui_key_capture = ui.clone();
         controller.connect_key_pressed(move |_, key, _, _| {
             if !armed_key.get() {
                 return glib::Propagation::Proceed;
@@ -2637,7 +2626,7 @@ fn build_ui(app: &Application) {
                 if !n.is_empty() {
                     entry.set_text(&key_alias(&n));
                     armed_key.set(false);
-                    ui.status.set_text("Lock key captured ✓");
+                    ui_key_capture.status.set_text("Lock key captured ✓");
                     return glib::Propagation::Stop;
                 }
             }
