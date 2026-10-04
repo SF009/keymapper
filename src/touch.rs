@@ -239,7 +239,6 @@ struct AimRuntime {
     edge_margin: f32,
     relative: bool,
     continuous: bool,
-    button: Option<u16>,
 }
 
 pub struct Mapper {
@@ -320,7 +319,6 @@ impl Mapper {
                 edge_margin: a.edge_margin,
                 relative: a.mode.eq_ignore_ascii_case("relative"),
                 continuous,
-                button,
             })
         } else {
             None
