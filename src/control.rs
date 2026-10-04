@@ -8,8 +8,10 @@ use std::{
     os::unix::fs::PermissionsExt,
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -20,11 +22,11 @@ pub extern "C" fn signal_handler(_: libc::c_int) {
     SHUTDOWN.store(true, Ordering::Release);
 }
 
-pub fn install_signal_handlers(){
-    unsafe{
-        libc::signal(libc::SIGTERM,signal_handler as *const () as usize);
-        libc::signal(libc::SIGINT,signal_handler as *const () as usize);
-        libc::signal(libc::SIGHUP,signal_handler as *const () as usize);
+pub fn install_signal_handlers() {
+    unsafe {
+        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::c_int);
+        libc::signal(libc::SIGINT, signal_handler as *const () as libc::c_int);
+        libc::signal(libc::SIGHUP, signal_handler as *const () as libc::c_int);
     }
 }
 
@@ -50,46 +52,60 @@ fn home_dir() -> PathBuf {
 
 pub fn request(command: &str) -> Result<String, Box<dyn Error>> {
     let mut stream = UnixStream::connect(socket_path())?;
-    stream.set_read_timeout(Some(Duration::from_millis(150)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(150)))?;
-    stream.write_all(command.as_bytes())?;
+    stream.set_read_timeout(Some(Duration::from_millis(250)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(250)))?;
+    stream.write_all(command.trim().as_bytes())?;
     stream.write_all(b"\n")?;
     stream.shutdown(std::net::Shutdown::Write).ok();
+
     let mut out = String::new();
     stream.read_to_string(&mut out)?;
     Ok(out.trim().to_string())
 }
 
-fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>){
-    let mut buf=String::new();
-    if stream.read_to_string(&mut buf).is_err(){return}
-    let command=buf.lines().next().unwrap_or_default().trim().to_ascii_lowercase();
-    let reply=match command.as_str(){
-        "status"=>{
-            let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
-            let requested=control.mouse_locked.load(Ordering::Acquire);
-            format!("OK running=1 locked={} requested={} owner={} grab={} socket={}",
-                if locked{1}else{0},
-                if requested{1}else{0},
+fn handle(
+    mut stream: UnixStream,
+    mapper: &Arc<Mutex<Mapper>>,
+    control: &Arc<RuntimeControl>,
+) {
+    let mut buf = String::new();
+    if stream.read_to_string(&mut buf).is_err() {
+        return;
+    }
+
+    let command = buf.lines().next().unwrap_or_default().trim().to_ascii_lowercase();
+
+    let reply = match command.as_str() {
+        "status" => {
+            let (locked, grab) = mapper
+                .lock()
+                .map(|m| (m.is_mouse_locked(), m.config().performance.grab))
+                .unwrap_or((false, false));
+            let requested = control.mouse_locked.load(Ordering::Acquire);
+
+            format!(
+                "OK running=1 locked={} requested={} owner={} grab={} socket={}",
+                u8::from(locked),
+                u8::from(requested),
                 control.owner_name(),
-                if grab{1}else{0},
-                socket_path().display())
+                u8::from(grab),
+                socket_path().display()
+            )
         }
         "lock" => {
             let can_grab = mapper
                 .lock()
                 .map(|m| m.config().performance.grab)
                 .unwrap_or(false);
+
             if control.set_locked(true, can_grab) {
                 "OK requested=lock".to_string()
             } else {
                 "ERR cannot-lock: exclusive input grab is disabled".to_string()
             }
         }
-        "unlock"=>{
-            if control.set_locked(false,true){
-                control.notify_mouse();
-            }
+        "unlock" => {
+            control.set_locked(false, true);
             "OK requested=unlock".to_string()
         }
         "toggle" => {
@@ -97,25 +113,35 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
                 .lock()
                 .map(|m| m.config().performance.grab)
                 .unwrap_or(false);
+
             match control.toggle(can_grab) {
-                Some(next) => format!("OK requested={}", if next { "lock" } else { "unlock" }),
+                Some(next) => format!(
+                    "OK requested={}",
+                    if next { "lock" } else { "unlock" }
+                ),
                 None => "ERR cannot-lock: exclusive input grab is disabled".to_string(),
             }
         }
         "ping" => "OK pong".to_string(),
         _ => "ERR unknown-command (status|lock|unlock|toggle|ping)".to_string(),
     };
+
     let _ = stream.write_all(reply.as_bytes());
 }
 
-pub fn spawn_server(mapper: Arc<Mutex<Mapper>>, control: Arc<RuntimeControl>) -> io::Result<()> {
+pub fn spawn_server(
+    mapper: Arc<Mutex<Mapper>>,
+    control: Arc<RuntimeControl>,
+) -> io::Result<()> {
     let path = socket_path();
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
-        if parent.to_string_lossy().contains(".cache/waydroid-keymapper") {
+        if parent.ends_with(".cache/waydroid-keymapper") {
             let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
     }
+
     if path.exists() {
         match UnixStream::connect(&path) {
             Ok(mut stream) => {
@@ -124,12 +150,14 @@ pub fn spawn_server(mapper: Arc<Mutex<Mapper>>, control: Arc<RuntimeControl>) ->
                 let _ = stream.write_all(b"ping\n");
                 let mut reply = String::new();
                 let _ = stream.read_to_string(&mut reply);
+
                 if reply.trim() == "OK pong" {
                     return Err(io::Error::new(
                         io::ErrorKind::AddrInUse,
                         "another waydroid-keymapper instance is already running",
                     ));
                 }
+
                 let _ = fs::remove_file(&path);
             }
             Err(_) => {
@@ -137,21 +165,39 @@ pub fn spawn_server(mapper: Arc<Mutex<Mapper>>, control: Arc<RuntimeControl>) ->
             }
         }
     }
+
     let listener = UnixListener::bind(&path)?;
-    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            match stream {
-                Ok(s) => {
-                    let m = mapper.clone();
-                    let c = control.clone();
-                    thread::spawn(move || handle(s, &m, &c));
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+
+    thread::Builder::new()
+        .name("wd-control".into())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                if shutdown_requested() {
+                    break;
                 }
-                Err(e) => eprintln!("waydroid-keymapper: control socket error: {e}"),
+
+                match stream {
+                    Ok(s) => {
+                        let mapper = Arc::clone(&mapper);
+                        let control = Arc::clone(&control);
+                        let _ = thread::Builder::new()
+                            .name("wd-control-client".into())
+                            .spawn(move || handle(s, &mapper, &control));
+                    }
+                    Err(e) => {
+                        if !shutdown_requested() {
+                            eprintln!("waydroid-keymapper: control socket error: {e}");
+                        }
+                        break;
+                    }
+                }
             }
-        }
-        let _ = fs::remove_file(socket_path());
-    });
+
+            let _ = fs::remove_file(socket_path());
+        })
+        .map(|_| ())?;
+
     eprintln!("waydroid-keymapper: control socket {}", path.display());
     Ok(())
 }
