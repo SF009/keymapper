@@ -358,7 +358,11 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                                     }
                                 }
 
-                                if process_button{
+                                // Gameplay mouse bindings are active only while the
+                                // mapper owns the pointer. The Aim button is the one exception:
+                                // its press is allowed to transition an unlocked desktop into
+                                // the captured shooter state.
+                                if process_button && (locked || Some(code)==aim_button){
                                     if let Ok(mut m)=mapper.lock(){m.button(code,v);}
                                 }
 
