@@ -9,6 +9,7 @@ use std::{
     path::PathBuf,
     sync::{Arc,Mutex},
     thread,
+    time::Duration,
 };
 
 pub fn socket_path()->PathBuf{
@@ -20,6 +21,8 @@ pub fn socket_path()->PathBuf{
 
 pub fn request(command:&str)->Result<String,Box<dyn Error>>{
     let mut stream=UnixStream::connect(socket_path())?;
+    stream.set_read_timeout(Some(Duration::from_millis(300)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(300)))?;
     stream.write_all(command.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.shutdown(std::net::Shutdown::Write).ok();
@@ -53,10 +56,26 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
             "OK requested=unlock".to_string()
         }
         "toggle"=>{
-            let next=!control.mouse_locked.load(std::sync::atomic::Ordering::Acquire);
-            control.mouse_locked.store(next,std::sync::atomic::Ordering::Release);
-            control.notify_mouse();
-            format!("OK requested={}",if next{"lock"}else{"unlock"})
+            let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
+            if !can_grab && !control.mouse_locked.load(std::sync::atomic::Ordering::Acquire){
+                "ERR cannot-lock: exclusive input grab is disabled".to_string()
+            }else{
+                let mut current=control.mouse_locked.load(std::sync::atomic::Ordering::Acquire);
+                loop{
+                    let next=!current;
+                    match control.mouse_locked.compare_exchange(
+                        current,next,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    ){
+                        Ok(_)=>{
+                            control.notify_mouse();
+                            break format!("OK requested={}",if next{"lock"}else{"unlock"});
+                        }
+                        Err(actual)=>current=actual,
+                    }
+                }
+            }
         }
         "ping"=>"OK pong".to_string(),
         _=>"ERR unknown-command (status|lock|unlock|toggle|ping)".to_string(),
