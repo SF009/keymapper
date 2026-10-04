@@ -42,8 +42,8 @@ fn home_dir()->PathBuf{
 
 pub fn request(command:&str)->Result<String,Box<dyn Error>>{
     let mut stream=UnixStream::connect(socket_path())?;
-    stream.set_read_timeout(Some(Duration::from_millis(300)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(300)))?;
+    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(100)))?;
     stream.write_all(command.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.shutdown(std::net::Shutdown::Write).ok();
