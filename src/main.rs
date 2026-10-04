@@ -19,6 +19,7 @@ fn print_help(){
 }
 
 fn main()->Result<(),Box<dyn Error>>{
+ control::install_signal_handlers();
  // Waydroid's FIFO reader can disappear during a restart. Ignore SIGPIPE so
  // the mapper receives EPIPE and can reconnect instead of being terminated.
  unsafe{libc::signal(libc::SIGPIPE,libc::SIG_IGN);}
@@ -63,5 +64,12 @@ fn main()->Result<(),Box<dyn Error>>{
  if let Some(d)=cfg.devices.mouse.clone(){spawn_input(d,InputKind::Mouse,mapper.clone(),control.clone())?}
  let _=control::spawn_server(mapper.clone(),control.clone());
  eprintln!("waydroid-keymapper: running");
- loop{thread::sleep(Duration::from_secs(3600))}
+ while !control::shutdown_requested(){thread::sleep(Duration::from_millis(200))}
+ if let Ok(mut m)=mapper.lock(){
+  m.reset_keyboard_state();
+  m.reset_mouse_state();
+ }
+ control::remove_socket();
+ eprintln!("waydroid-keymapper: stopped cleanly");
+ Ok(())
 }
