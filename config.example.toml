@@ -1,74 +1,87 @@
 [display]
-width=1920
-height=1080
+width = 1920
+height = 1080
 
 [devices]
-keyboard="/dev/input/by-id/YOUR-KEYBOARD-event-kbd"
-mouse="/dev/input/by-id/YOUR-MOUSE-event-mouse"
+keyboard = "/dev/input/by-id/YOUR-KEYBOARD-event-kbd"
+mouse = "/dev/input/by-id/YOUR-MOUSE-event-mouse"
 
 [joystick]
-up="W"
-down="S"
-left="A"
-right="D"
-center_x=0.15
-center_y=0.76
-radius=0.085
-normalize_diagonal=true
-slot=0
+up = "W"
+down = "S"
+left = "A"
+right = "D"
+center_x = 0.15
+center_y = 0.76
+radius = 0.085
+normalize_diagonal = true
+slot = 0
 
 [aim]
-button="MOUSE_RIGHT"
-center_x=0.50
-center_y=0.50
-sensitivity=2.0
-slot=1
-invert_x=false
-invert_y=false
-scale_x=1.0
-scale_y=1.0
-edge_margin=0.12
-# touch = compatible absolute aim; relative = unbounded FPS mouse aim
-mode="relative"
+# Use "ALWAYS" for standard continuous FPS mouse-look whenever mouse is locked (F8),
+# or specify a button like "MOUSE_RIGHT" for hold-to-aim.
+button = "ALWAYS"
+center_x = 0.50
+center_y = 0.50
+sensitivity = 2.0
+slot = 1
+invert_x = false
+invert_y = false
+scale_x = 1.0
+scale_y = 1.0
+edge_margin = 0.12
+# "relative" = unbounded low-latency FPS mouse aim (recommended); "touch" = absolute touch emulator
+mode = "relative"
 
 [[taps]]
-key="SPACE"
-x=0.86
-y=0.86
-slot=2
+key = "SPACE"
+x = 0.86
+y = 0.86
+slot = 2
 
 [[taps]]
-key="R"
-x=0.93
-y=0.18
-slot=3
+key = "R"
+x = 0.93
+y = 0.18
+slot = 3
 
 [[holds]]
-key="F"
-x=0.78
-y=0.84
-slot=4
+key = "F"
+x = 0.78
+y = 0.84
+slot = 4
 
-[performance]
-grab=true
-realtime=true
-realtime_priority=10
-mouse_lock = false
-# F8 toggles capture: locked -> desktop mouse released, unlocked -> capture again
-mouse_toggle_key="F8"
-# Bounded FIFO tuning; keep defaults for lowest input latency
-fifo_write_retries=3
-fifo_write_wait_ms=1
-fifo_reconnect_ms=25
-
-[touch]
-pressure=80
-major=8
-minor=8
-
+[[holds]]
+key = "SHIFT"
+x = 0.28
+y = 0.76
+slot = 6
 
 [[mouse_holds]]
-button="MOUSE_LEFT"
-x=0.88
-y=0.78
-slot=5
+button = "MOUSE_LEFT"
+x = 0.88
+y = 0.78
+slot = 5
+
+[[mouse_taps]]
+button = "MOUSE_RIGHT"
+x = 0.88
+y = 0.58
+slot = 7
+
+[performance]
+grab = true
+realtime = true
+realtime_priority = 10
+mouse_lock = false
+# F8 toggles capture: locked -> full gaming controls, unlocked -> normal desktop controls
+mouse_toggle_key = "F8"
+# Bounded FIFO tuning for lowest input latency
+fifo_write_retries = 3
+fifo_write_wait_ms = 1
+fifo_reconnect_ms = 25
+
+[touch]
+pressure = 80
+major = 8
+minor = 8
