@@ -626,7 +626,7 @@ impl Mapper {
         }
 
         let Some(a) = self.aim_cfg else { return };
-        if !a.continuous && !self.aim_active {
+        if !a.relative && !a.continuous && !self.aim_active {
             return;
         }
 
