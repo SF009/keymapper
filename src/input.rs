@@ -75,12 +75,17 @@ impl RuntimeControl{
     }
 
     /// Release only an Aim-owned lock. A manual F8 lock survives Aim release.
-    pub fn release_aim_lock(&self){
+    pub fn release_aim_lock(&self)->bool{
         if self.lock_owner.compare_exchange(
             LOCK_AIM,LOCK_NONE,Ordering::AcqRel,Ordering::Acquire
         ).is_ok(){
             self.mouse_locked.store(false,Ordering::Release);
             self.notify_mouse();
+            true
+        }else{
+            // Ownership was transferred to another owner (for example a manual
+            // F8 lock) while Aim was active. The new owner must keep the grab.
+            false
         }
     }
 
@@ -363,8 +368,11 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                                 // Mapper state is released first; only then is the
                                 // kernel grab dropped for an Aim-owned lock.
                                 if Some(code)==aim_button&&v==0&&auto_lock_on_aim{
-                                    control.release_aim_lock();
-                                    locked=apply_mouse_lock(&mut d,false,grab,false,mapper,control);
+                                    if control.release_aim_lock(){
+                                        locked=apply_mouse_lock(&mut d,false,grab,false,mapper,control);
+                                    }else{
+                                        locked=control.mouse_locked.load(Ordering::Acquire);
+                                    }
                                 }
                             }
                             _=>{}
@@ -596,7 +604,7 @@ mod runtime_control_tests{
         assert_eq!(control.owner_name(),"aim");
         assert!(control.mouse_locked.load(Ordering::Acquire));
         assert!(!control.request_aim_lock(true));
-        control.release_aim_lock();
+        let _=control.release_aim_lock();
         assert_eq!(control.owner_name(),"none");
         assert!(!control.mouse_locked.load(Ordering::Acquire));
 
