@@ -80,6 +80,7 @@ struct Ui {
     touch_major:SpinButton,
     touch_minor:SpinButton,
     mouse_lock:CheckButton,
+    auto_lock_on_aim:CheckButton,
     mouse_toggle:Entry,
     runtime_status:Label,
     lock_status:Label,
@@ -224,7 +225,7 @@ fn default_config()->Config{
         holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
         mouse_taps:Vec::new(),
         mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
-        performance:Performance{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25},touch:TouchSettings::default(),
+        performance:Performance{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,auto_lock_on_aim:true,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25},touch:TouchSettings::default(),
     }
 }
 
@@ -746,6 +747,7 @@ fn sync_form(ui:&Ui){
     ui.touch_major.set_value(st.cfg.touch.major as f64);
     ui.touch_minor.set_value(st.cfg.touch.minor as f64);
     ui.mouse_lock.set_active(st.cfg.performance.mouse_lock);
+    ui.auto_lock_on_aim.set_active(st.cfg.performance.auto_lock_on_aim);
     ui.mouse_toggle.set_text(&st.cfg.performance.mouse_toggle_key);
     fill_devices(&ui.keyboard,&st.cfg.devices.keyboard,false);
     fill_devices(&ui.mouse,&st.cfg.devices.mouse,true);
@@ -764,6 +766,7 @@ fn sync_state_from_form(ui:&Ui){
     st.cfg.performance.fifo_write_wait_ms=ui.fifo_write_wait.value().round() as u64;
     st.cfg.performance.fifo_reconnect_ms=ui.fifo_reconnect.value().round() as u64;
     st.cfg.performance.mouse_lock=ui.mouse_lock.is_active();
+    st.cfg.performance.auto_lock_on_aim=ui.auto_lock_on_aim.is_active();
     st.cfg.performance.mouse_toggle_key=ui.mouse_toggle.text().trim().to_string();
 
     if ui.aim_enabled.is_active(){
@@ -1346,6 +1349,7 @@ fn build_ui(app:&Application){
     let realtime_priority=make_spin(1.,99.,1.,0);let fifo_write_retries=make_spin(1.,8.,1.,0);let fifo_write_wait=make_spin(0.,5.,1.,0);let fifo_reconnect=make_spin(5.,2000.,5.,0);
     let touch_pressure=make_spin(1.,255.,1.,0);let touch_major=make_spin(1.,255.,1.,0);let touch_minor=make_spin(1.,255.,1.,0);
     let mouse_lock=CheckButton::with_label("Lock mouse on start");
+    let auto_lock_on_aim=CheckButton::with_label("Auto-lock while Aim is held");
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
     let runtime_status=Label::new(Some("Service: Not installed"));
     let lock_status=Label::new(Some("Mouse: offline"));
@@ -1356,7 +1360,7 @@ fn build_ui(app:&Application){
     input_access.set_wrap(true);
 
     let bindings_box=GtkBox::new(Orientation::Vertical,6);
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_x:aim_invert_x.clone(),aim_invert_y:aim_invert_y.clone(),aim_scale_x:aim_scale_x.clone(),aim_scale_y:aim_scale_y.clone(),aim_edge_margin:aim_edge_margin.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),joy_normalize:joy_normalize.clone(),grab:grab.clone(),realtime:realtime.clone(),realtime_priority:realtime_priority.clone(),fifo_write_retries:fifo_write_retries.clone(),fifo_write_wait:fifo_write_wait.clone(),fifo_reconnect:fifo_reconnect.clone(),touch_pressure:touch_pressure.clone(),touch_major:touch_major.clone(),touch_minor:touch_minor.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_x:aim_invert_x.clone(),aim_invert_y:aim_invert_y.clone(),aim_scale_x:aim_scale_x.clone(),aim_scale_y:aim_scale_y.clone(),aim_edge_margin:aim_edge_margin.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),joy_normalize:joy_normalize.clone(),grab:grab.clone(),realtime:realtime.clone(),realtime_priority:realtime_priority.clone(),fifo_write_retries:fifo_write_retries.clone(),fifo_write_wait:fifo_write_wait.clone(),fifo_reconnect:fifo_reconnect.clone(),touch_pressure:touch_pressure.clone(),touch_major:touch_major.clone(),touch_minor:touch_minor.clone(), mouse_lock:mouse_lock.clone(),auto_lock_on_aim:auto_lock_on_aim.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -1424,13 +1428,13 @@ fn build_ui(app:&Application){
     form_row(&jg,4,"Center X",&joy_x);form_row(&jg,5,"Center Y",&joy_y);form_row(&jg,6,"Radius",&joy_radius);form_row(&jg,7,"Slot",&joy_slot);
     jg.attach(&joy_normalize,1,8,1,1);joystick.append(&jg);
 
-    let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);
+    let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);perf.append(&auto_lock_on_aim);
     let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);
     let toggle_box=GtkBox::new(Orientation::Horizontal,5);
     let capture_toggle=Button::with_label("Capture");
     toggle_box.append(&mouse_toggle);toggle_box.append(&capture_toggle);
     form_row(&mg,0,"Lock toggle key",&toggle_box);form_row(&mg,1,"RT priority",&realtime_priority);form_row(&mg,2,"FIFO retries",&fifo_write_retries);form_row(&mg,3,"FIFO wait (ms)",&fifo_write_wait);form_row(&mg,4,"FIFO reconnect (ms)",&fifo_reconnect);perf.append(&mg);
-    let help=Label::new(Some("The toggle key is reserved for mouse capture and cannot also be a gameplay binding."));
+    let help=Label::new(Some("Aim ownership is automatic when enabled: RMB can enter FPS aim without pressing F8 first. The toggle key remains reserved for manual mouse capture."));
     help.set_wrap(true);help.set_halign(gtk4::Align::Start);perf.append(&help);
 
     let touch=add_section(&right,"Touch input tuning");
@@ -1457,7 +1461,7 @@ fn build_ui(app:&Application){
     let unlock_btn=Button::with_label("🖱 Unlock mouse");
     let toggle_btn=Button::with_label("Toggle");
     rb2.append(&lock_btn);rb2.append(&unlock_btn);rb2.append(&toggle_btn);runtime.append(&rb2);
-    let lock_help=Label::new(Some("When locked, GNOME no longer receives mouse events. Use the configured toggle key (default F8), or Ctrl+Alt+F12 as emergency unlock."));
+    let lock_help=Label::new(Some("Aim can own the mouse automatically while held (recommended for Free Fire/FPS). F8 is the manual lock toggle; Ctrl+Alt+F12 is the emergency unlock."));
     lock_help.set_wrap(true);lock_help.set_halign(gtk4::Align::Start);runtime.append(&lock_help);
     let waydroid_state_label=Label::new(Some(&format!("Waydroid: {}",waydroid_state())));
     waydroid_state_label.set_halign(gtk4::Align::Start);runtime.append(&waydroid_state_label);
