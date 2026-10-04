@@ -110,7 +110,11 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     }
 
     loop{
-        if control::shutdown_requested(){break}
+        if control::shutdown_requested(){
+            let _=d.ungrab();
+            if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
+            break
+        }
         let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
         match fetched{
             Ok(events)=>{
