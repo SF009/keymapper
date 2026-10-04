@@ -30,8 +30,15 @@ fn main()->Result<(),Box<dyn Error>>{
   println!("{}",env!("CARGO_PKG_VERSION"));
   return Ok(())
  }
+ if cmd=="devices"{
+  for (path,d) in evdev::enumerate(){println!("{}\t{}",path.display(),d.name().unwrap_or("-"));}
+  return Ok(())
+ }
+ if !matches!(cmd.as_str(),"run"|"check"){
+  print_help();
+  return Err(format!("unknown command: {cmd}").into())
+ }
  let path=PathBuf::from(a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into())))));
- if cmd=="devices"{for (_path,d) in evdev::enumerate(){println!("{}  {}",d.physical_path().unwrap_or("-"),d.name().unwrap_or("-"));}return Ok(())}
  let data=fs::read_to_string(&path).map_err(|e|format!("cannot read config '{}': {e}. Open the GTK GUI to create/manage it.",path.display()))?;
  let cfg:Config=toml::from_str(&data)?;
  if cmd=="check"{
