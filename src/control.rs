@@ -59,7 +59,12 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
     let reply=match command.as_str(){
         "status"=>{
             let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
-            format!("OK running=1 locked={} grab={} socket={}",if locked{1}else{0},if grab{1}else{0},socket_path().display())
+            let requested=control.mouse_locked.load(Ordering::Acquire);
+            format!("OK running=1 locked={} requested={} grab={} socket={}",
+                if locked{1}else{0},
+                if requested{1}else{0},
+                if grab{1}else{0},
+                socket_path().display())
         }
         "lock"=>{
             let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
