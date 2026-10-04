@@ -30,6 +30,11 @@ impl RuntimeControl{
         true
     }
 
+    pub fn force_unlock(&self){
+        self.mouse_locked.store(false,Ordering::Release);
+        self.notify_mouse();
+    }
+
     pub fn toggle(&self,allow_lock:bool)->Option<bool>{
         let mut current=self.mouse_locked.load(Ordering::Acquire);
         loop{
@@ -95,6 +100,11 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     };
     best_effort_realtime(realtime,"wd-keyboard");
 
+    // Emergency unlock must remain available even while the keyboard itself
+    // is grabbed. Ctrl+Alt+F12 is intentionally independent of the profile.
+    let mut ctrl_down=false;
+    let mut alt_down=false;
+
     if grab{
         if let Err(e)=d.grab(){eprintln!("waydroid-keymapper: keyboard grab failed for {path}: {e}");}
     }
@@ -107,12 +117,29 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
                 for e in events{
                     if let EventSummary::Key(_,c,v)=e.destructure(){
-                        if Some(c.0)==toggle && v==1{
+                        let code=c.0;
+                        if code==KeyCode::KEY_LEFTCTRL.0||code==KeyCode::KEY_RIGHTCTRL.0{
+                            ctrl_down=v!=0;
+                        }
+                        if code==KeyCode::KEY_LEFTALT.0||code==KeyCode::KEY_RIGHTALT.0{
+                            alt_down=v!=0;
+                        }
+
+                        // Hard escape from a grabbed-mouse state. This path is
+                        // handled before normal mapping and therefore still works
+                        // when the desktop no longer receives mouse events.
+                        if code==KeyCode::KEY_F12.0&&v==1&&ctrl_down&&alt_down{
+                            control.force_unlock();
+                            m.set_mouse_lock(false);
+                            continue;
+                        }
+
+                        if Some(code)==toggle&&v==1{
                             let can_grab=m.config().performance.grab;
                             if control.toggle(can_grab).is_some(){control.notify_mouse();}
                             continue;
                         }
-                        m.key(c.0,v);
+                        m.key(code,v);
                     }
                 }
             }
@@ -123,6 +150,18 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
                 return;
             }
+        }
+    }
+}
+
+fn flush_pending_mouse_events(d:&mut Device){
+    loop{
+        match d.fetch_events(){
+            Ok(events)=>{let _=events.count();},
+            Err(e) if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::Interrupted)=> {
+                if e.kind()==io::ErrorKind::WouldBlock{break}
+            }
+            Err(_)=>break,
         }
     }
 }
@@ -150,12 +189,19 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
             eprintln!("waydroid-keymapper: mouse grab failed for {path}: {e}");
             locked=false;
             control.mouse_locked.store(false,Ordering::Release);
+        }else{
+            // Never forward motion that was queued before the actual grab.
+            flush_pending_mouse_events(&mut d);
         }
     }
     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
 
     loop{
-        if control::shutdown_requested(){break}
+        if control::shutdown_requested(){
+            let _=d.ungrab();
+            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            break
+        }
         let mut fds=[
             libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
             libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
@@ -178,8 +224,19 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                 }else{true};
 
                 if ok{
+                    if desired{
+                        // Drop packets that were already queued while the
+                        // desktop still owned the device. This prevents the
+                        // first locked movement from becoming a huge jump.
+                        flush_pending_mouse_events(&mut d);
+                    }
                     locked=desired;
                     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
+                    if !desired{
+                        // The compositor can receive a fresh stream after
+                        // EVIOCGRAB is released; don't retain stale packets here.
+                        flush_pending_mouse_events(&mut d);
+                    }
                 }else if desired{
                     // Never report locked while the kernel grab actually failed.
                     control.mouse_locked.store(false,Ordering::Release);
