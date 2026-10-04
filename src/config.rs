@@ -57,8 +57,8 @@ impl Config{
   if let (Some(k),Some(m))=(&self.devices.keyboard,&self.devices.mouse){
    if !k.is_empty()&&!m.is_empty()&&k==m{return Err("keyboard and mouse cannot use the same evdev device".into())}
   }
-  if self.performance.mouse_lock&&!self.performance.grab{
-   return Err("mouse_lock requires performance.grab=true".into())
+  if (self.performance.mouse_lock||self.performance.auto_lock_on_aim)&&!self.performance.grab{
+   return Err("mouse_lock/auto_lock_on_aim requires performance.grab=true".into())
   }
   if self.performance.realtime_priority<1||self.performance.realtime_priority>99{return Err("realtime_priority must be 1..99".into())}
   if self.performance.fifo_write_retries==0||self.performance.fifo_write_retries>8{return Err("fifo_write_retries must be 1..8".into())}
