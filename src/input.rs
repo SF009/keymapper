@@ -1,4 +1,4 @@
-use crate::touch::Mapper;
+use crate::{control, touch::Mapper};
 use evdev::{Device,EventSummary,KeyCode,RelativeAxisCode};
 use std::{
     error::Error,
@@ -82,6 +82,7 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     }
 
     loop{
+        if control::shutdown_requested(){break}
         let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
         match fetched{
             Ok(events)=>{
@@ -99,6 +100,7 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 }
             }
             Err(e)=>{
+                if control::shutdown_requested(){break}
                 if matches!(e.kind(),io::ErrorKind::Interrupted){continue}
                 let _=d.ungrab();
                 if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
@@ -136,6 +138,7 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
 
     loop{
+        if control::shutdown_requested(){break}
         let mut fds=[
             libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
             libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
@@ -143,6 +146,7 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
 
         let rc=unsafe{libc::poll(fds.as_mut_ptr(),fds.len() as libc::nfds_t,-1)};
         if rc<0{
+            if control::shutdown_requested(){break}
             if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
             if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
             return;
@@ -215,6 +219,7 @@ pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:
             // Device nodes can disappear when Waydroid/USB devices restart.
             // Keep one tiny reconnect loop rather than killing the whole daemon.
             loop{
+                if control::shutdown_requested(){break}
                 match kind{
                     InputKind::Keyboard=>keyboard_loop(&path,&mapper,&control),
                     InputKind::Mouse=>mouse_loop(&path,&mapper,&control),
