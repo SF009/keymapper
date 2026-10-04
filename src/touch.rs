@@ -448,10 +448,10 @@ mod tests{
             joystick:None,
             aim:Some(Aim{
                 button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,
-                sensitivity:0.5,slot:1,invert_y:false,mode:"relative".into(),
+                sensitivity:0.5,slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
             }),
             taps:vec![],holds:vec![],mouse_taps:vec![],mouse_holds:vec![],
-            performance:Performance::default(),
+            performance:Performance::default(),touch:crate::config::TouchSettings::default(),
         }
     }
 
@@ -482,7 +482,7 @@ mod tests{
         let mut c=cfg();
         c.joystick=Some(crate::config::Joystick{
             up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-            center_x:0.15,center_y:0.76,radius:0.08,slot:0,
+            center_x:0.15,center_y:0.76,radius:0.08,normalize_diagonal:true,slot:0,
         });
         c.holds.push(crate::config::Hold{key:"SHIFT".into(),x:0.8,y:0.8,slot:2});
         let mut m=Mapper::new(c).unwrap();
