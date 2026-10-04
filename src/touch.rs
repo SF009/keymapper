@@ -260,7 +260,7 @@ impl Mapper{
         let first=!self.any_down();
         let(x,y)=self.xy(x,y);
         let id=self.next;
-        self.next=self.next.wrapping_add(1);
+        self.next=if self.next>=i32::MAX-1{1}else{self.next+1};
         self.slots[i]=C{down:true};
         let mut e=vec![
             (ABS,SLOT,s as i32),

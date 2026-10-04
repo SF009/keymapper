@@ -47,7 +47,7 @@ slot=4
 [performance]
 grab=true
 realtime=true
-mouse_lock=true
+mouse_lock = false
 # F8 toggles capture: locked -> desktop mouse released, unlocked -> capture again
 mouse_toggle_key="F8"
 

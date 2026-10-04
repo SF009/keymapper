@@ -20,6 +20,7 @@ use std::{
     path::{Path,PathBuf},
     process::Command,
     rc::Rc,
+    sync::mpsc,
     time::Duration,
 };
 
@@ -165,6 +166,9 @@ fn preset_minimal()->Config{
 enum ShooterPreset{FreeFire,Fps,Minimal}
 
 fn apply_preset(ui:&Ui,preset:ShooterPreset){
+    // Capture any unsaved form/device changes before replacing the profile
+    // contents with the selected preset.
+    sync_state_from_form(ui);
     let preset_cfg=match preset{
         ShooterPreset::FreeFire=>preset_free_fire(),
         ShooterPreset::Fps=>preset_fps(),
@@ -199,7 +203,7 @@ fn default_config()->Config{
         }),
         aim:Some(Aim{
             button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
-            slot:1,invert_y:false,mode:"touch".into(),
+            slot:1,invert_y:false,mode:"relative".into(),
         }),
         taps:vec![
             Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
@@ -208,7 +212,7 @@ fn default_config()->Config{
         holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
         mouse_taps:Vec::new(),
         mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
-        performance:Performance{grab:true,realtime:true,mouse_lock:true,mouse_toggle_key:"F8".into()},
+        performance:Performance{grab:true,realtime:true,mouse_lock:false,mouse_toggle_key:"F8".into()},
     }
 }
 
@@ -256,6 +260,14 @@ fn save_profile(path:&Path,cfg:&Config)->Result<(),Box<dyn Error>>{
 
 fn display_name(path:&Path)->String{
     path.file_stem().and_then(|x|x.to_str()).unwrap_or("profile").to_string()
+}
+
+fn safe_profile_name(name:&str)->Option<String>{
+    let safe=name.chars()
+        .map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'})
+        .collect::<String>();
+    let safe=safe.trim_matches('_').to_string();
+    if safe.is_empty()||safe=="."||safe==".." {None} else {Some(safe)}
 }
 
 fn clamp(v:f64)->f32{v.clamp(0.,1.) as f32}
@@ -557,6 +569,35 @@ fn attach_key_capture(entry:&Entry,button:&Button,status:&Label){
     entry.add_controller(controller);
 }
 
+fn attach_mouse_capture(entry:&Entry,button:&Button,status:&Label){
+    let armed=Rc::new(Cell::new(false));
+    let a=armed.clone();let e=entry.clone();let s=status.clone();
+    button.connect_clicked(move |_|{
+        a.set(true);
+        e.grab_focus();
+        s.set_text("Click a mouse button to capture…");
+    });
+
+    let controller=GestureClick::new();
+    controller.set_button(0);
+    let a2=armed.clone();let e2=entry.clone();let s2=status.clone();
+    controller.connect_pressed(move |gesture,_,_,_|{
+        if !a2.get(){return}
+        let token=match gesture.current_button(){
+            1=>"MOUSE_LEFT",
+            2=>"MOUSE_MIDDLE",
+            3=>"MOUSE_RIGHT",
+            8=>"MOUSE_SIDE",
+            9=>"MOUSE_EXTRA",
+            _=>return,
+        };
+        e2.set_text(token);
+        a2.set(false);
+        s2.set_text("Mouse button captured");
+    });
+    entry.add_controller(controller);
+}
+
 fn open_add_dialog(ui:&Ui,kind:EditType){
     open_binding_dialog_inner(ui,None,kind);
 }
@@ -614,7 +655,11 @@ fn open_binding_dialog_inner(ui:&Ui,existing:Option<BindingRef>,kind:EditType){
         slot.set_value(2.);
     }
     let status=ui.status.clone();
-    if matches!(kind,EditType::KeyboardTap|EditType::KeyboardHold){attach_key_capture(&key_entry,&capture,&status)}else{capture.set_visible(false);}
+    if matches!(kind,EditType::KeyboardTap|EditType::KeyboardHold){
+        attach_key_capture(&key_entry,&capture,&status);
+    }else{
+        attach_mouse_capture(&key_entry,&capture,&status);
+    }
 
     let ui2=ui.clone();
     dialog.connect_response(move |d,response|{
@@ -715,9 +760,7 @@ fn save_current(ui:&Ui)->Result<(),String>{
     sync_state_from_form(ui);
     let name=ui.profile_name.text().trim().to_string();
     if name.is_empty(){return Err("Profile name is empty".into())}
-    let safe=name.chars().map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'}).collect::<String>();
-    let safe=safe.trim_matches('_').to_string();
-    if safe.is_empty(){return Err("Invalid profile name".into())}
+    let safe=safe_profile_name(&name).ok_or_else(||"Invalid profile name".to_string())?;
 
     let mut st=ui.state.borrow_mut();
     let old_path=st.profile_path.clone();
@@ -753,12 +796,11 @@ fn install_user_executable(src:&Path,dst:&Path)->Result<(),String>{
 
 fn desktop_entry()->String{
     let exe=gui_install_path().to_string_lossy().replace('\\',"\\\\").replace(' ',"\\ ");
-    format!("[Desktop Entry]\\nType=Application\\nName=Waydroid Keymapper\\nComment=Low-latency Waydroid keyboard and mouse profile editor\\nExec={}\\nIcon=input-gaming\\nTerminal=false\\nCategories=Utility;Game;\\nKeywords=Waydroid;Android;Gaming;Keymapper;\\n",exe)
+    format!("[Desktop Entry]\nType=Application\nName=Waydroid Keymapper\nComment=Low-latency Waydroid keyboard and mouse profile editor\nExec={}\nIcon=input-gaming\nTerminal=false\nCategories=Utility;Game;\nKeywords=Waydroid;Android;Gaming;Keymapper;\n",exe)
 }
 
 fn udev_rules_text()->&'static str{
-    r#"KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"
-SUBSYSTEM=="input", KERNEL=="event*", MODE="0660", GROUP="input", TAG+="uaccess"
+    r#"SUBSYSTEM=="input", KERNEL=="event*", MODE="0660", GROUP="input", TAG+="uaccess"
 "#
 }
 
@@ -941,6 +983,38 @@ fn device_access(path:Option<String>)->String{
     }
 }
 
+fn run_background<F>(ui:&Ui,busy:&str,task:F)
+where
+    F:FnOnce()->Result<String,String>+Send+'static,
+{
+    let ui2=ui.clone();
+    set_status(ui,busy);
+    let (tx,rx)=mpsc::channel();
+    std::thread::spawn(move||{
+        let _=tx.send(task());
+    });
+    glib::timeout_add_local(Duration::from_millis(50),move||{
+        match rx.try_recv(){
+            Ok(Ok(msg))=>{
+                if msg.is_empty(){set_status(&ui2,"Done ✓")}else{set_status(&ui2,&msg);}
+                update_runtime_status(&ui2);
+                glib::ControlFlow::Break
+            }
+            Ok(Err(err))=>{
+                set_status(&ui2,&err);
+                update_runtime_status(&ui2);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty)=>glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected)=>{
+                set_status(&ui2,"Background operation aborted");
+                update_runtime_status(&ui2);
+                glib::ControlFlow::Break
+            }
+        }
+    });
+}
+
 fn update_runtime_status(ui:&Ui){
     let svc=runtime_service_state();
     ui.runtime_status.set_text(&format!("Service: {svc}"));
@@ -948,13 +1022,20 @@ fn update_runtime_status(ui:&Ui){
         let st=ui.state.borrow();
         (st.cfg.devices.keyboard.clone(),st.cfg.devices.mouse.clone())
     };
-    ui.input_access.set_text(&format!("Keyboard: {}\\nMouse: {}",device_access(kbd),device_access(mouse)));
+    ui.input_access.set_text(&format!("Keyboard: {}\nMouse: {}",device_access(kbd),device_access(mouse)));
     match control::request("status"){
         Ok(reply)=>{
             let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
+            let requested=reply.split_whitespace().find_map(|x|x.strip_prefix("requested=")).unwrap_or(locked);
             let running=reply.split_whitespace().find_map(|x|x.strip_prefix("running=")).unwrap_or("1");
             if running=="1"{
-                ui.lock_status.set_text(if locked=="1"{"Mouse: 🔒 LOCKED"}else{"Mouse: 🖱 UNLOCKED"});
+                let state=match (requested,locked){
+                    ("1","1")=>"Mouse: 🔒 LOCKED",
+                    ("1","0")=>"Mouse: 🔄 LOCKING…",
+                    ("0","1")=>"Mouse: 🔄 UNLOCKING…",
+                    _=>"Mouse: 🖱 UNLOCKED",
+                };
+                ui.lock_status.set_text(state);
             }else{
                 ui.lock_status.set_text("Mouse: offline");
             }
@@ -1008,18 +1089,35 @@ fn diagnostics(ui:&Ui){
 
 fn runtime_control(ui:&Ui,command:&str){
     match control::request(command){
-        Ok(reply)=>set_status(ui,&format!("Daemon: {reply}")),
+        Ok(reply)=>{
+            set_status(ui,&format!("Daemon: {reply}"));
+            // The command is asynchronous with respect to the mouse thread.
+            // Refresh once again shortly after the request so the GUI shows the
+            // actual kernel-grab state rather than only the requested state.
+            let ui2=ui.clone();
+            glib::timeout_add_local_once(Duration::from_millis(60),move||update_runtime_status(&ui2));
+        }
         Err(e)=>set_status(ui,&format!("Daemon control unavailable: {e}")),
     }
     update_runtime_status(ui);
 }
 
 fn waydroid_action(ui:&Ui,action:&str){
-    let result=Command::new("waydroid").args(["session",action]).spawn();
-    match result{
-        Ok(_)=>set_status(ui,&format!("Waydroid session {action} requested")),
-        Err(e)=>set_status(ui,&format!("Waydroid command failed: {e}")),
-    }
+    let action=action.to_string();
+    run_background(ui,&format!("Waydroid session {action}: starting…"),move||{
+        match Command::new("waydroid").args(["session",&action]).output(){
+            Ok(out) if out.status.success()=>{
+                let msg=String::from_utf8_lossy(&out.stdout).trim().replace('\n'," • ");
+                Ok(if msg.is_empty(){format!("Waydroid session {action}: OK")}else{format!("Waydroid session {action}: {msg}")})
+            }
+            Ok(out)=>{
+                let err=String::from_utf8_lossy(&out.stderr).trim().replace('\n'," • ");
+                let err=if err.is_empty(){String::from_utf8_lossy(&out.stdout).trim().to_string()}else{err};
+                Err(format!("Waydroid session {action} failed: {err}"))
+            }
+            Err(e)=>Err(format!("Waydroid command failed: {e}")),
+        }
+    });
 }
 
 fn waydroid_state()->String{
@@ -1033,6 +1131,14 @@ fn waydroid_state()->String{
 }
 
 fn apply_and_run(ui:&Ui){
+    sync_state_from_form(ui);
+    {
+        let st=ui.state.borrow();
+        if let Err(e)=st.cfg.validate_runtime(){
+            set_status(ui,&format!("Cannot run: {e}"));
+            return
+        }
+    }
     if let Err(e)=save_current(ui){set_status(ui,&format!("Save failed: {e}"));return}
     if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
 
@@ -1106,8 +1212,11 @@ fn ask_name(parent:&ApplicationWindow,title:&str,initial:&str,callback:impl Fn(S
 fn new_profile(ui:&Ui,app:&ApplicationWindow){
     let ui2=ui.clone();
     ask_name(app,"New profile","pubg",move|name|{
-        if name.is_empty(){return}
-        let path=profiles_dir().join(format!("{name}.toml"));
+        let Some(safe)=safe_profile_name(&name) else {
+            set_status(&ui2,"Invalid profile name");
+            return
+        };
+        let path=profiles_dir().join(format!("{safe}.toml"));
         if path.exists(){set_status(&ui2,"Profile already exists");return}
         let cfg=default_config();
         match save_profile(&path,&cfg){
@@ -1123,11 +1232,15 @@ fn new_profile(ui:&Ui,app:&ApplicationWindow){
 }
 
 fn duplicate_profile(ui:&Ui,app:&ApplicationWindow){
+    sync_state_from_form(ui);
     let current=ui.state.borrow().profile_path.clone();
     let ui2=ui.clone();
     ask_name(app,"Duplicate profile",&format!("{}_copy",display_name(&current)),move|name|{
-        if name.is_empty(){return}
-        let path=profiles_dir().join(format!("{name}.toml"));
+        let Some(safe)=safe_profile_name(&name) else {
+            set_status(&ui2,"Invalid profile name");
+            return
+        };
+        let path=profiles_dir().join(format!("{safe}.toml"));
         if path.exists(){set_status(&ui2,"Profile already exists");return}
         let cfg=ui2.state.borrow().cfg.clone();
         match save_profile(&path,&cfg){
@@ -1197,7 +1310,7 @@ fn build_ui(app:&Application){
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
     let runtime_status=Label::new(Some("Service: Not installed"));
     let lock_status=Label::new(Some("Mouse: offline"));
-    let input_access=Label::new(Some("Keyboard: checking…\\nMouse: checking…"));
+    let input_access=Label::new(Some("Keyboard: checking…\nMouse: checking…"));
     runtime_status.set_halign(gtk4::Align::Start);
     lock_status.set_halign(gtk4::Align::Start);
     input_access.set_halign(gtk4::Align::Start);
@@ -1296,10 +1409,12 @@ fn build_ui(app:&Application){
     rb0.append(&enable_btn);rb0.append(&disable_btn);runtime.append(&rb0);
     runtime.append(&diagnostics_btn);
     let rb2=GtkBox::new(Orientation::Horizontal,5);
-    let lock_btn=Button::with_label("🔒 Lock");
-    let unlock_btn=Button::with_label("🖱 Unlock");
+    let lock_btn=Button::with_label("🔒 Lock mouse");
+    let unlock_btn=Button::with_label("🖱 Unlock mouse");
     let toggle_btn=Button::with_label("Toggle");
     rb2.append(&lock_btn);rb2.append(&unlock_btn);rb2.append(&toggle_btn);runtime.append(&rb2);
+    let lock_help=Label::new(Some("When locked, GNOME no longer receives mouse events. Use the configured toggle key (default F8), or Ctrl+Alt+F12 as emergency unlock."));
+    lock_help.set_wrap(true);lock_help.set_halign(gtk4::Align::Start);runtime.append(&lock_help);
     let waydroid_state_label=Label::new(Some(&format!("Waydroid: {}",waydroid_state())));
     waydroid_state_label.set_halign(gtk4::Align::Start);runtime.append(&waydroid_state_label);
     let wb=GtkBox::new(Orientation::Horizontal,5);
@@ -1393,30 +1508,24 @@ fn build_ui(app:&Application){
     attach_key_capture(&mouse_toggle,&capture_toggle,&status);
 
     let ui2=ui.clone();enable_btn.connect_clicked(move |_|{
-        match service_action("enable"){Ok(_)=>set_status(&ui2,"Daemon autostart enabled ✓"),Err(e)=>set_status(&ui2,&format!("Enable failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Enabling daemon at login…",||service_action("enable"));
     });
     let ui2=ui.clone();disable_btn.connect_clicked(move |_|{
-        match service_action("disable"){Ok(_)=>set_status(&ui2,"Daemon autostart disabled"),Err(e)=>set_status(&ui2,&format!("Disable failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Disabling daemon autostart…",||service_action("disable"));
     });
     let ui2=ui.clone();diagnostics_btn.connect_clicked(move |_|diagnostics(&ui2));
 
     let ui2=ui.clone();install_btn.connect_clicked(move |_|{
-        match install_runtime(){Ok(())=>set_status(&ui2,"Runtime installed/repaired ✓"),Err(e)=>set_status(&ui2,&format!("Runtime setup failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Installing / repairing runtime…",install_runtime);
     });
     let ui2=ui.clone();start_btn.connect_clicked(move |_|{
-        match service_action("start"){Ok(_)=>set_status(&ui2,"Daemon service started ✓"),Err(e)=>set_status(&ui2,&format!("Start failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Starting daemon…",||service_action("start"));
     });
     let ui2=ui.clone();stop_btn.connect_clicked(move |_|{
-        match service_action("stop"){Ok(_)=>set_status(&ui2,"Daemon service stopped"),Err(e)=>set_status(&ui2,&format!("Stop failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Stopping daemon…",||service_action("stop"));
     });
     let ui2=ui.clone();restart_btn.connect_clicked(move |_|{
-        match service_action("restart"){Ok(_)=>set_status(&ui2,"Daemon service restarted ✓"),Err(e)=>set_status(&ui2,&format!("Restart failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Restarting daemon…",||service_action("restart"));
     });
     let ui2=ui.clone();lock_btn.connect_clicked(move |_|runtime_control(&ui2,"lock"));
     let ui2=ui.clone();unlock_btn.connect_clicked(move |_|runtime_control(&ui2,"unlock"));
@@ -1448,14 +1557,11 @@ fn build_ui(app:&Application){
     let ui2=ui.clone();apply.connect_clicked(move |_|apply_and_run(&ui2));
     let ui2=ui.clone();validate.connect_clicked(move |_|validate_current(&ui2));
     let ui2=ui.clone();fix_input.connect_clicked(move |_|{
-        match install_input_permissions(){
-            Ok(msg)=>set_status(&ui2,&msg),
-            Err(e)=>set_status(&ui2,&format!("Input permission repair failed: {e}")),
-        }
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Repairing input permissions…",install_input_permissions);
     });
 
     let ui2=ui.clone();refresh_dev.connect_clicked(move |_|{
+        sync_state_from_form(&ui2);
         let cfg=ui2.state.borrow().cfg.clone();
         fill_devices(&ui2.keyboard,&cfg.devices.keyboard,false);
         fill_devices(&ui2.mouse,&cfg.devices.mouse,true);
@@ -1478,4 +1584,17 @@ fn main(){
     let app=Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run();
+}
+
+
+#[cfg(test)]
+mod profile_name_tests{
+    use super::safe_profile_name;
+
+    #[test]
+    fn profile_name_is_sanitized(){
+        assert_eq!(safe_profile_name("Free Fire").as_deref(),Some("Free_Fire"));
+        assert_eq!(safe_profile_name("../escape").as_deref(),Some("escape"));
+        assert!(safe_profile_name("___").is_none());
+    }
 }

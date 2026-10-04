@@ -31,15 +31,22 @@ pub fn shutdown_requested()->bool{SHUTDOWN.load(Ordering::Acquire)}
 
 pub fn socket_path()->PathBuf{
     if let Some(dir)=env::var_os("XDG_RUNTIME_DIR"){
-        return PathBuf::from(dir).join("waydroid-keymapper.sock");
+        let dir=PathBuf::from(dir);
+        if dir.is_dir(){
+            return dir.join("waydroid-keymapper.sock");
+        }
     }
-    PathBuf::from(format!("/tmp/waydroid-keymapper-{}.sock",unsafe{libc::getuid()}))
+    home_dir().join(".cache/waydroid-keymapper/waydroid-keymapper.sock")
+}
+
+fn home_dir()->PathBuf{
+    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("."))
 }
 
 pub fn request(command:&str)->Result<String,Box<dyn Error>>{
     let mut stream=UnixStream::connect(socket_path())?;
-    stream.set_read_timeout(Some(Duration::from_millis(300)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(300)))?;
+    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(100)))?;
     stream.write_all(command.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.shutdown(std::net::Shutdown::Write).ok();
@@ -55,7 +62,12 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
     let reply=match command.as_str(){
         "status"=>{
             let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
-            format!("OK running=1 locked={} grab={} socket={}",if locked{1}else{0},if grab{1}else{0},socket_path().display())
+            let requested=control.mouse_locked.load(Ordering::Acquire);
+            format!("OK running=1 locked={} requested={} grab={} socket={}",
+                if locked{1}else{0},
+                if requested{1}else{0},
+                if grab{1}else{0},
+                socket_path().display())
         }
         "lock"=>{
             let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
@@ -84,11 +96,31 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
 
 pub fn spawn_server(mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->io::Result<()>{
     let path=socket_path();
-    if let Some(parent)=path.parent(){fs::create_dir_all(parent)?;}
-    match fs::remove_file(&path){
-        Ok(())=>{},
-        Err(e) if e.kind()==io::ErrorKind::NotFound=>{},
-        Err(e)=>return Err(e),
+    if let Some(parent)=path.parent(){
+        fs::create_dir_all(parent)?;
+        // The /tmp fallback was replaced with a private per-user directory.
+        // Keep that directory inaccessible to other users.
+        if parent.to_string_lossy().contains(".cache/waydroid-keymapper"){
+            let _=fs::set_permissions(parent,fs::Permissions::from_mode(0o700));
+        }
+    }
+    if path.exists(){
+        match UnixStream::connect(&path){
+            Ok(mut stream)=>{
+                let _=stream.set_read_timeout(Some(Duration::from_millis(100)));
+                let _=stream.set_write_timeout(Some(Duration::from_millis(100)));
+                let _=stream.write_all(b"ping\n");
+                let mut reply=String::new();
+                let _=stream.read_to_string(&mut reply);
+                if reply.trim()=="OK pong"{
+                    return Err(io::Error::new(io::ErrorKind::AddrInUse,"another waydroid-keymapper instance is already running"));
+                }
+                let _=fs::remove_file(&path);
+            }
+            Err(_) =>{
+                let _=fs::remove_file(&path);
+            }
+        }
     }
     let listener=UnixListener::bind(&path)?;
     let _=fs::set_permissions(&path,fs::Permissions::from_mode(0o600));

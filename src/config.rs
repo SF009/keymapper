@@ -21,9 +21,9 @@ pub struct Config{
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Hold{pub key:String,pub x:f32,pub y:f32,#[serde(default="s3")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseTap{pub button:String,pub x:f32,pub y:f32,#[serde(default="s4")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseHold{pub button:String,pub x:f32,pub y:f32,#[serde(default="s5")]pub slot:u8}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="dt")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String}
-fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn f8()->String{"F8".into()} fn touch_mode()->String{"touch".into()}
-impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,mouse_lock:true,mouse_toggle_key:"F8".into()}}}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="dm")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String}
+fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn dm()->bool{false} fn f8()->String{"F8".into()} fn touch_mode()->String{"touch".into()}
+impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,mouse_lock:false,mouse_toggle_key:"F8".into()}}}
 
 impl Config{
  pub fn conflicts(&self)->Vec<String>{
@@ -87,6 +87,22 @@ impl Config{
   if let Some(msg)=self.conflicts().into_iter().next(){return Err(msg.into())}
   Ok(())
  }
+ pub fn validate_runtime(&self)->Result<(),Box<dyn Error>>{
+  self.validate()?;
+
+  let keyboard_required=self.performance.mouse_lock||self.joystick.is_some()||!self.taps.is_empty()||!self.holds.is_empty();
+  if keyboard_required&&self.devices.keyboard.as_deref().unwrap_or("").is_empty(){
+   return Err("a keyboard device is required for the configured keyboard mappings".into())
+  }
+
+  let mouse_required=self.performance.mouse_lock||self.aim.is_some()||!self.mouse_taps.is_empty()||!self.mouse_holds.is_empty();
+  if mouse_required&&self.devices.mouse.as_deref().unwrap_or("").is_empty(){
+   return Err("a mouse device is required for the configured mouse mappings/lock".into())
+  }
+
+  Ok(())
+ }
+
  pub fn touch_fifo(&self)->String{
   if let Ok(p)=env::var("WAYDROID_TOUCH_FIFO"){return p}
   let c=["/dev/input/wl_touch_events","/var/lib/waydroid/rootfs/dev/input/wl_touch_events","/opt/waydroid/rootfs/dev/input/wl_touch_events"];
@@ -117,8 +133,14 @@ mod tests{
  #[test]
  fn default_performance_is_shooter_safe(){
   let p=Performance::default();
-  assert!(p.grab&&p.realtime&&p.mouse_lock);
+  assert!(p.grab&&p.realtime&&!p.mouse_lock);
   assert_eq!(p.mouse_toggle_key,"F8");
+ }
+
+ #[test]
+ fn missing_mouse_lock_defaults_to_unlocked(){
+  let p:Performance=toml::from_str("grab=true\nrealtime=true\n").unwrap();
+  assert!(!p.mouse_lock);
  }
 
  #[test]
@@ -161,6 +183,31 @@ mod tests{
   c.performance.mouse_lock=true;
   c.performance.grab=false;
   assert!(c.validate().is_err());
+ }
+
+ #[test]
+ fn runtime_validation_requires_devices_for_active_mappings(){
+  let mut c=base();
+  c.joystick=Some(Joystick{
+   up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+   center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+  });
+  assert!(c.validate().is_ok());
+  assert!(c.validate_runtime().is_err());
+
+  c.joystick=None;
+  c.performance.mouse_lock=true;
+  assert!(c.validate_runtime().is_err());
+
+  c.devices.keyboard=Some("/dev/input/event0".into());
+  c.aim=Some(Aim{
+   button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
+   slot:1,invert_y:false,mode:"relative".into(),
+  });
+  assert!(c.validate_runtime().is_err());
+
+  c.devices.mouse=Some("/dev/input/event1".into());
+  assert!(c.validate_runtime().is_ok());
  }
 
  #[test]

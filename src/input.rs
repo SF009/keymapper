@@ -30,6 +30,11 @@ impl RuntimeControl{
         true
     }
 
+    pub fn force_unlock(&self){
+        self.mouse_locked.store(false,Ordering::Release);
+        self.notify_mouse();
+    }
+
     pub fn toggle(&self,allow_lock:bool)->Option<bool>{
         let mut current=self.mouse_locked.load(Ordering::Acquire);
         loop{
@@ -95,24 +100,53 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     };
     best_effort_realtime(realtime,"wd-keyboard");
 
+    // Emergency unlock must remain available even while the keyboard itself
+    // is grabbed. Ctrl+Alt+F12 is intentionally independent of the profile.
+    let mut ctrl_down=false;
+    let mut alt_down=false;
+
     if grab{
-        if let Err(e)=d.grab(){eprintln!("waydroid-keymapper: keyboard grab failed for {path}: {e}");}
+        if let Err(e)=d.grab(){
+            eprintln!("waydroid-keymapper: keyboard grab failed for {path}: {e}");
+            return
+        }
     }
 
     loop{
-        if control::shutdown_requested(){break}
+        if control::shutdown_requested(){
+            let _=d.ungrab();
+            if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
+            break
+        }
         let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
         match fetched{
             Ok(events)=>{
                 let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
                 for e in events{
                     if let EventSummary::Key(_,c,v)=e.destructure(){
-                        if Some(c.0)==toggle && v==1{
+                        let code=c.0;
+                        if code==KeyCode::KEY_LEFTCTRL.0||code==KeyCode::KEY_RIGHTCTRL.0{
+                            ctrl_down=v!=0;
+                        }
+                        if code==KeyCode::KEY_LEFTALT.0||code==KeyCode::KEY_RIGHTALT.0{
+                            alt_down=v!=0;
+                        }
+
+                        // Hard escape from a grabbed-mouse state. This path is
+                        // handled before normal mapping and therefore still works
+                        // when the desktop no longer receives mouse events.
+                        if code==KeyCode::KEY_F12.0&&v==1&&ctrl_down&&alt_down{
+                            control.force_unlock();
+                            m.set_mouse_lock(false);
+                            continue;
+                        }
+
+                        if Some(code)==toggle&&v==1{
                             let can_grab=m.config().performance.grab;
                             if control.toggle(can_grab).is_some(){control.notify_mouse();}
                             continue;
                         }
-                        m.key(c.0,v);
+                        m.key(code,v);
                     }
                 }
             }
@@ -123,6 +157,18 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
                 return;
             }
+        }
+    }
+}
+
+fn flush_pending_mouse_events(d:&mut Device){
+    loop{
+        match d.fetch_events(){
+            Ok(events)=>{let _=events.count();},
+            Err(e) if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::Interrupted)=> {
+                if e.kind()==io::ErrorKind::WouldBlock{break}
+            }
+            Err(_)=>break,
         }
     }
 }
@@ -150,12 +196,19 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
             eprintln!("waydroid-keymapper: mouse grab failed for {path}: {e}");
             locked=false;
             control.mouse_locked.store(false,Ordering::Release);
+        }else{
+            // Never forward motion that was queued before the actual grab.
+            flush_pending_mouse_events(&mut d);
         }
     }
     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
 
     loop{
-        if control::shutdown_requested(){break}
+        if control::shutdown_requested(){
+            let _=d.ungrab();
+            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            break
+        }
         let mut fds=[
             libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
             libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
@@ -178,6 +231,12 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                 }else{true};
 
                 if ok{
+                    if desired{
+                        // Discard packets queued before the exclusive grab. They
+                        // belong to the unlocked desktop stream and must not
+                        // become the first in-game movement after locking.
+                        flush_pending_mouse_events(&mut d);
+                    }
                     locked=desired;
                     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
                 }else if desired{
@@ -196,10 +255,13 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
         }
 
         if fds[0].revents&libc::POLLIN!=0{
+            // After Unlock the compositor owns the device again. Do not read a
+            // pending batch here, otherwise we would consume events intended
+            // for GNOME after releasing EVIOCGRAB.
+            if !locked{continue}
             let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
             match fetched{
                 Ok(events)=>{
-                    if !locked{continue}
                     let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
                     let mut dx=0i32;
                     let mut dy=0i32;
@@ -373,6 +435,31 @@ pub fn key_code(s:&str)->Result<u16,Box<dyn Error>>{
  "KP0"=>KeyCode::KEY_KP0.0,"KP1"=>KeyCode::KEY_KP1.0,"KP2"=>KeyCode::KEY_KP2.0,"KP3"=>KeyCode::KEY_KP3.0,
  "KP4"=>KeyCode::KEY_KP4.0,"KP5"=>KeyCode::KEY_KP5.0,"KP6"=>KeyCode::KEY_KP6.0,"KP7"=>KeyCode::KEY_KP7.0,
  "KP8"=>KeyCode::KEY_KP8.0,"KP9"=>KeyCode::KEY_KP9.0,
+ "LEFTMETA"|"META_L"|"SUPER_L"|"WIN_L"|"WINDOWS"=>KeyCode::KEY_LEFTMETA.0,
+ "RIGHTMETA"|"META_R"|"SUPER_R"|"WIN_R"=>KeyCode::KEY_RIGHTMETA.0,
+ "META"|"SUPER"|"WIN"=>KeyCode::KEY_LEFTMETA.0,
+ "MENU"|"APPLICATION"=>KeyCode::KEY_MENU.0,
+ "PRINT"|"PRINTSCREEN"=>KeyCode::KEY_SYSRQ.0,
+ "SYSRQ"=>KeyCode::KEY_SYSRQ.0,
+ "PAUSE"=>KeyCode::KEY_PAUSE.0,
+ "KPENTER"=>KeyCode::KEY_KPENTER.0,
+ "KPSLASH"=>KeyCode::KEY_KPSLASH.0,
+ "KPASTERISK"|"KPSTAR"=>KeyCode::KEY_KPASTERISK.0,
+ "KPMINUS"=>KeyCode::KEY_KPMINUS.0,
+ "KPPLUS"=>KeyCode::KEY_KPPLUS.0,
+ "KPDOT"=>KeyCode::KEY_KPDOT.0,
+ "KPEQUAL"=>KeyCode::KEY_KPEQUAL.0,
+ "GRAVE"|"BACKTICK"=>KeyCode::KEY_GRAVE.0,
+ "MINUS"=>KeyCode::KEY_MINUS.0,
+ "EQUAL"=>KeyCode::KEY_EQUAL.0,
+ "LEFTBRACE"|"LBRACKET"=>KeyCode::KEY_LEFTBRACE.0,
+ "RIGHTBRACE"|"RBRACKET"=>KeyCode::KEY_RIGHTBRACE.0,
+ "BACKSLASH"=>KeyCode::KEY_BACKSLASH.0,
+ "SEMICOLON"=>KeyCode::KEY_SEMICOLON.0,
+ "APOSTROPHE"|"QUOTE"=>KeyCode::KEY_APOSTROPHE.0,
+ "COMMA"=>KeyCode::KEY_COMMA.0,
+ "DOT"|"PERIOD"=>KeyCode::KEY_DOT.0,
+ "SLASH"=>KeyCode::KEY_SLASH.0,
  _=>return Err(format!("unknown key {s}").into())};
  Ok(v)
 }
@@ -389,4 +476,28 @@ pub fn button_code(s:&str)->Result<u16,Box<dyn Error>>{
   "MOUSE_TASK"|"TASK"=>Ok(KeyCode::BTN_TASK.0),
   _=>Err(format!("unknown button {s}").into())
  }
+}
+
+
+#[cfg(test)]
+mod runtime_control_tests{
+    use super::*;
+
+    #[test]
+    fn toggle_respects_grab_permission(){
+        let control=RuntimeControl::new(false).unwrap();
+        assert_eq!(control.toggle(false),Some(false));
+        assert_eq!(control.toggle(false),None);
+
+        assert_eq!(control.toggle(true),Some(true));
+        assert!(control.mouse_locked.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn emergency_unlock_always_clears_state(){
+        let control=RuntimeControl::new(true).unwrap();
+        assert!(control.mouse_locked.load(Ordering::Acquire));
+        control.force_unlock();
+        assert!(!control.mouse_locked.load(Ordering::Acquire));
+    }
 }
