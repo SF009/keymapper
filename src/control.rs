@@ -9,7 +9,25 @@ use std::{
     path::PathBuf,
     sync::{Arc,Mutex},
     thread,
+    time::Duration,
+    sync::atomic::{AtomicBool,Ordering},
 };
+
+pub static SHUTDOWN:AtomicBool=AtomicBool::new(false);
+
+pub extern "C" fn signal_handler(_:libc::c_int){
+    SHUTDOWN.store(true,Ordering::Release);
+}
+
+pub fn install_signal_handlers(){
+    unsafe{
+        libc::signal(libc::SIGTERM,signal_handler as usize);
+        libc::signal(libc::SIGINT,signal_handler as usize);
+        libc::signal(libc::SIGHUP,signal_handler as usize);
+    }
+}
+
+pub fn shutdown_requested()->bool{SHUTDOWN.load(Ordering::Acquire)}
 
 pub fn socket_path()->PathBuf{
     if let Some(dir)=env::var_os("XDG_RUNTIME_DIR"){
@@ -20,6 +38,8 @@ pub fn socket_path()->PathBuf{
 
 pub fn request(command:&str)->Result<String,Box<dyn Error>>{
     let mut stream=UnixStream::connect(socket_path())?;
+    stream.set_read_timeout(Some(Duration::from_millis(300)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(300)))?;
     stream.write_all(command.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.shutdown(std::net::Shutdown::Write).ok();
@@ -34,18 +54,15 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
     let command=buf.lines().next().unwrap_or_default().trim().to_ascii_lowercase();
     let reply=match command.as_str(){
         "status"=>{
-            let locked=mapper.lock().map(|m|m.is_mouse_locked()).unwrap_or(false);
-            format!("OK running=1 locked={} socket={}",if locked{1}else{0},socket_path().display())
+            let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
+            format!("OK running=1 locked={} grab={} socket={}",if locked{1}else{0},if grab{1}else{0},socket_path().display())
         }
         "lock"=>{
             let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
-            if !can_grab{
-                "ERR cannot-lock: exclusive input grab is disabled".to_string()
-            }else{
-                control.mouse_locked.store(true,std::sync::atomic::Ordering::Release);
+            if control.set_locked(true,can_grab){
                 control.notify_mouse();
                 "OK requested=lock".to_string()
-            }
+            }else{"ERR cannot-lock: exclusive input grab is disabled".to_string()}
         }
         "unlock"=>{
             control.mouse_locked.store(false,std::sync::atomic::Ordering::Release);
@@ -53,10 +70,11 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
             "OK requested=unlock".to_string()
         }
         "toggle"=>{
-            let next=!control.mouse_locked.load(std::sync::atomic::Ordering::Acquire);
-            control.mouse_locked.store(next,std::sync::atomic::Ordering::Release);
-            control.notify_mouse();
-            format!("OK requested={}",if next{"lock"}else{"unlock"})
+            let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
+            match control.toggle(can_grab){
+                Some(next)=>{control.notify_mouse();format!("OK requested={}",if next{"lock"}else{"unlock"})}
+                None=>"ERR cannot-lock: exclusive input grab is disabled".to_string(),
+            }
         }
         "ping"=>"OK pong".to_string(),
         _=>"ERR unknown-command (status|lock|unlock|toggle|ping)".to_string(),
@@ -92,3 +110,6 @@ pub fn spawn_server(mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->io::
 }
 
 use std::os::unix::fs::PermissionsExt;
+
+
+pub fn remove_socket(){let _=fs::remove_file(socket_path());}

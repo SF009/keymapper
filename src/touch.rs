@@ -38,15 +38,24 @@ struct E{
 struct Pipe{
     p:String,
     f:Option<std::fs::File>,
+    next_connect:std::time::Instant,
 }
 impl Pipe{
-    fn new(p:String)->Self{Self{p,f:None}}
+    fn new(p:String)->Self{Self{p,f:None,next_connect:std::time::Instant::now()}}
     fn connect(&mut self)->io::Result<()>{
         if self.f.is_some(){return Ok(())}
+        let now=std::time::Instant::now();
+        if now<self.next_connect{
+            return Err(io::Error::new(io::ErrorKind::WouldBlock,"FIFO reconnect backoff"));
+        }
         let c=std::ffi::CString::new(self.p.as_str()).map_err(|_|io::Error::new(io::ErrorKind::InvalidInput,"invalid FIFO path"))?;
         let fd=unsafe{libc::open(c.as_ptr(),libc::O_WRONLY|libc::O_NONBLOCK|libc::O_CLOEXEC)};
-        if fd<0{return Err(io::Error::last_os_error())}
+        if fd<0{
+            self.next_connect=now+std::time::Duration::from_millis(25);
+            return Err(io::Error::last_os_error())
+        }
         self.f=Some(unsafe{std::fs::File::from_raw_fd(fd)});
+        self.next_connect=now;
         Ok(())
     }
     fn send(&mut self,es:&[(u16,u16,i32)]){
@@ -70,7 +79,7 @@ impl Pipe{
                 let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
+            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(25);},}
             return;
         }
 
@@ -206,14 +215,13 @@ impl Mapper{
         let mut mouse_hold_slots=[false;16];
         for x in &cfg.mouse_holds{mouse_hold_slots[x.slot as usize]=true;}
 
-        let mouse_locked=cfg.performance.mouse_lock;
         Ok(Self{
             touch:Pipe::new(cfg.touch_fifo()),
             pointer:Pipe::new(cfg.pointer_fifo()),
             cfg:Arc::new(cfg),
             slots:[C{down:false};16],
             next:1,
-            mx:0.5,my:0.5,aim:false,mouse_locked,
+            mx:0.5,my:0.5,aim:false,mouse_locked:false,
             rel_acc_x:0.0,rel_acc_y:0.0,
             keys:[false;MAX_INPUT_CODE],
             key_actions:key_actions.into_boxed_slice(),
@@ -435,12 +443,23 @@ mod tests{
     #[test]
     fn relative_mouse_accumulates_subpixel_motion(){
         let mut m=Mapper::new(cfg()).unwrap();
+        m.set_mouse_lock(true);
         m.button(KeyCode::BTN_RIGHT.0,1);
         assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
         m.mouse(1,0);
         assert!((m.rel_acc_x-0.5).abs()<f32::EPSILON);
         m.mouse(1,0);
         assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
+    }
+
+    #[test]
+    fn mapper_starts_unlocked_until_runtime_grabs_mouse(){
+        let mut m=Mapper::new(cfg()).unwrap();
+        assert!(!m.is_mouse_locked());
+        m.set_mouse_lock(true);
+        assert!(m.is_mouse_locked());
+        m.set_mouse_lock(false);
+        assert!(!m.is_mouse_locked());
     }
 
     #[test]

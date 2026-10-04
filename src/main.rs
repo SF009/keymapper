@@ -19,6 +19,7 @@ fn print_help(){
 }
 
 fn main()->Result<(),Box<dyn Error>>{
+ control::install_signal_handlers();
  // Waydroid's FIFO reader can disappear during a restart. Ignore SIGPIPE so
  // the mapper receives EPIPE and can reconnect instead of being terminated.
  unsafe{libc::signal(libc::SIGPIPE,libc::SIG_IGN);}
@@ -30,8 +31,15 @@ fn main()->Result<(),Box<dyn Error>>{
   println!("{}",env!("CARGO_PKG_VERSION"));
   return Ok(())
  }
+ if cmd=="devices"{
+  for d in input::list_input_devices(){println!("{}\t{}",d.path,d.name);}
+  return Ok(())
+ }
+ if !matches!(cmd.as_str(),"run"|"check"){
+  print_help();
+  return Err(format!("unknown command: {cmd}").into())
+ }
  let path=PathBuf::from(a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into())))));
- if cmd=="devices"{for (_path,d) in evdev::enumerate(){println!("{}  {}",d.physical_path().unwrap_or("-"),d.name().unwrap_or("-"));}return Ok(())}
  let data=fs::read_to_string(&path).map_err(|e|format!("cannot read config '{}': {e}. Open the GTK GUI to create/manage it.",path.display()))?;
  let cfg:Config=toml::from_str(&data)?;
  if cmd=="check"{
@@ -54,7 +62,14 @@ fn main()->Result<(),Box<dyn Error>>{
  let control=RuntimeControl::new(cfg.performance.mouse_lock)?;
  if let Some(d)=cfg.devices.keyboard.clone(){spawn_input(d,InputKind::Keyboard,mapper.clone(),control.clone())?}
  if let Some(d)=cfg.devices.mouse.clone(){spawn_input(d,InputKind::Mouse,mapper.clone(),control.clone())?}
- let _=control::spawn_server(mapper.clone(),control.clone());
+ if let Err(e)=control::spawn_server(mapper.clone(),control.clone()){eprintln!("waydroid-keymapper: control socket unavailable: {e}");}
  eprintln!("waydroid-keymapper: running");
- loop{thread::sleep(Duration::from_secs(3600))}
+ while !control::shutdown_requested(){thread::sleep(Duration::from_millis(200))}
+ if let Ok(mut m)=mapper.lock(){
+  m.reset_keyboard_state();
+  m.reset_mouse_state();
+ }
+ control::remove_socket();
+ eprintln!("waydroid-keymapper: stopped cleanly");
+ Ok(())
 }

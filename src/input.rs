@@ -1,4 +1,4 @@
-use crate::touch::Mapper;
+use crate::{control, touch::Mapper};
 use evdev::{Device,EventSummary,KeyCode,RelativeAxisCode};
 use std::{
     error::Error,
@@ -24,6 +24,24 @@ impl RuntimeControl{
         if fd<0{return Err(io::Error::last_os_error())}
         Ok(Arc::new(Self{mouse_locked:AtomicBool::new(locked),mouse_event:unsafe{OwnedFd::from_raw_fd(fd)}}))
     }
+    pub fn set_locked(&self,locked:bool,allow_lock:bool)->bool{
+        if locked&&!allow_lock{return false}
+        self.mouse_locked.store(locked,Ordering::Release);
+        true
+    }
+
+    pub fn toggle(&self,allow_lock:bool)->Option<bool>{
+        let mut current=self.mouse_locked.load(Ordering::Acquire);
+        loop{
+            let next=!current;
+            if next&&!allow_lock{return None}
+            match self.mouse_locked.compare_exchange(current,next,Ordering::AcqRel,Ordering::Acquire){
+                Ok(_)=>return Some(next),
+                Err(actual)=>current=actual,
+            }
+        }
+    }
+
     pub fn notify_mouse(&self){
         let value:libc::c_ulonglong=1;
         unsafe{
@@ -82,6 +100,7 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
     }
 
     loop{
+        if control::shutdown_requested(){break}
         let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
         match fetched{
             Ok(events)=>{
@@ -89,9 +108,8 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 for e in events{
                     if let EventSummary::Key(_,c,v)=e.destructure(){
                         if Some(c.0)==toggle && v==1{
-                            let next=!control.mouse_locked.load(Ordering::Acquire);
-                            control.mouse_locked.store(next,Ordering::Release);
-                            control.notify_mouse();
+                            let can_grab=m.config().performance.grab;
+                            if control.toggle(can_grab).is_some(){control.notify_mouse();}
                             continue;
                         }
                         m.key(c.0,v);
@@ -99,6 +117,7 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
                 }
             }
             Err(e)=>{
+                if control::shutdown_requested(){break}
                 if matches!(e.kind(),io::ErrorKind::Interrupted){continue}
                 let _=d.ungrab();
                 if let Ok(mut m)=mapper.lock(){m.reset_keyboard_state();}
@@ -136,6 +155,7 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
 
     loop{
+        if control::shutdown_requested(){break}
         let mut fds=[
             libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
             libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
@@ -143,6 +163,7 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
 
         let rc=unsafe{libc::poll(fds.as_mut_ptr(),fds.len() as libc::nfds_t,-1)};
         if rc<0{
+            if control::shutdown_requested(){break}
             if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
             if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
             return;
@@ -215,6 +236,7 @@ pub fn spawn_input(path:String,kind:InputKind,mapper:Arc<Mutex<Mapper>>,control:
             // Device nodes can disappear when Waydroid/USB devices restart.
             // Keep one tiny reconnect loop rather than killing the whole daemon.
             loop{
+                if control::shutdown_requested(){break}
                 match kind{
                     InputKind::Keyboard=>keyboard_loop(&path,&mapper,&control),
                     InputKind::Mouse=>mouse_loop(&path,&mapper,&control),
@@ -237,6 +259,90 @@ pub enum MouseAction{
     Aim,
     Tap{slot:u8,x:f32,y:f32},
     Hold{slot:u8,x:f32,y:f32},
+}
+
+#[derive(Clone,Debug)]
+pub struct InputDeviceInfo{
+    pub path:String,
+    pub name:String,
+    pub is_keyboard:bool,
+    pub is_mouse:bool,
+    pub score:i32,
+}
+
+fn inspect_device(path:&std::path::Path)->Option<InputDeviceInfo>{
+    let d=Device::open(path).ok()?;
+    let keys=d.supported_keys();
+    let rel=d.supported_relative_axes();
+    let is_mouse=keys.as_ref().map(|k|
+        k.contains(KeyCode::BTN_LEFT)||
+        k.contains(KeyCode::BTN_RIGHT)||
+        k.contains(KeyCode::BTN_MIDDLE)
+    ).unwrap_or(false) && rel.as_ref().map(|a|
+        a.contains(RelativeAxisCode::REL_X)||
+        a.contains(RelativeAxisCode::REL_Y)
+    ).unwrap_or(false);
+    let is_keyboard=keys.as_ref().map(|k|
+        k.contains(KeyCode::KEY_A)||
+        k.contains(KeyCode::KEY_W)||
+        k.contains(KeyCode::KEY_ENTER)||
+        k.contains(KeyCode::KEY_ESC)
+    ).unwrap_or(false);
+
+    if !is_mouse&&!is_keyboard{return None}
+
+    let name=d.name().unwrap_or("input").to_string();
+    let lower=name.to_ascii_lowercase();
+    let mut score=0;
+    if !lower.contains("virtual"){score+=40}
+    if !lower.contains("ydotool"){score+=40}
+    if !lower.contains("keyd"){score+=40}
+    if is_mouse{
+        if lower.contains("usb"){score+=25}
+        if lower.contains("optical"){score+=15}
+        if lower.contains("touchpad"){score-=35}
+    }
+    if is_keyboard{
+        if lower.contains("at translated"){score+=25}
+        if lower.contains("keyboard"){score+=15}
+    }
+
+    Some(InputDeviceInfo{
+        path:path.to_string_lossy().to_string(),
+        name,
+        is_keyboard,
+        is_mouse,
+        score,
+    })
+}
+
+pub fn list_input_devices()->Vec<InputDeviceInfo>{
+    let mut out=Vec::<InputDeviceInfo>::new();
+    let mut seen=std::collections::HashSet::<std::path::PathBuf>::new();
+
+    if let Ok(dir)=std::fs::read_dir("/dev/input/by-id"){
+        let mut stable:Vec<std::path::PathBuf>=dir.flatten().map(|e|e.path()).collect();
+        stable.sort();
+        for p in stable{
+            if !p.is_symlink(){continue}
+            if let Some(info)=inspect_device(&p){
+                let canonical=p.canonicalize().unwrap_or_else(|_|p.clone());
+                if seen.insert(canonical){out.push(info);}
+            }
+        }
+    }
+
+    for (path,_) in evdev::enumerate(){
+        let canonical=path.canonicalize().unwrap_or_else(|_|path.clone());
+        if seen.contains(&canonical){continue}
+        if let Some(info)=inspect_device(&path){
+            seen.insert(canonical);
+            out.push(info);
+        }
+    }
+
+    out.sort_by(|a,b|b.score.cmp(&a.score).then_with(||a.path.cmp(&b.path)));
+    out
 }
 
 pub fn key_code(s:&str)->Result<u16,Box<dyn Error>>{

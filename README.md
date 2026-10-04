@@ -17,7 +17,7 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - tracking IDs and pressure/major/minor fields
 - normalized coordinates, independent of desktop resolution
 - direct Waydroid touch FIFO output
-- reconnect after Waydroid restarts
+- reconnect after Waydroid restarts and stable hotplug device paths when available
 - CLI commands: run, check, devices
 - user systemd unit and udev permissions
 
@@ -77,9 +77,7 @@ For Fire, use a [[mouse_holds]] binding such as MOUSE_LEFT. The mapper also acce
 
 ## GTK4 GUI / Profile Editor
 
-The GTK4 GUI is the primary management interface. It creates the first profile automatically and can install/repair the per-user daemon, write the user systemd unit, start/stop/restart the daemon, control mouse lock/unlock live, start/stop the Waydroid session, validate mappings, and activate the selected profile. No root shell is required for normal daemon/profile management.
-
-
+The GTK4 GUI is the primary management interface. It creates the first profile automatically and manages profiles, input devices, mappings, mouse lock/unlock, daemon installation/service state, Waydroid session state, validation, and input permissions. Normal daemon/profile management happens without a root shell; the optional input-permission repair uses a graphical polkit authentication prompt.
 
 The project also ships a native GTK4 profile editor:
 
@@ -94,16 +92,16 @@ On CachyOS / Arch, install GTK4 development/runtime packages before building:
 
 Launch it with:
 
-    waydroid-keymapper-gui
+    keymapper-gui
 
 Profiles are stored in:
 
     ~/.config/waydroid-keymapper/profiles/
 
 The GUI supports:
-- automatic physical keyboard/mouse detection with virtual-device filtering
-- live daemon status and live mouse LOCKED/UNLOCKED state through a private per-user Unix control socket
-- Install / Repair, Start, Stop and Restart for the user daemon service
+- automatic physical keyboard/mouse detection with stable `/dev/input/by-id` paths preferred and virtual-device filtering
+- live daemon status, mouse LOCKED/UNLOCKED state, and diagnostics through a private per-user Unix control socket
+- Install / Repair, Start, Stop, Restart, Enable-at-login and Disable-at-login for the user daemon service
 - direct Lock, Unlock and Toggle commands without editing TOML or using the terminal
 - Waydroid session Start/Stop controls and status display
 
@@ -118,7 +116,7 @@ The GUI supports:
 - normalized X/Y and touch-slot editing
 - duplicate-slot validation before saving
 - Save, Validate and Apply & Run
-- Apply & Run copies the selected profile to ~/.config/waydroid-keymapper/config.toml and restarts the user systemd service
+- Apply & Run copies the selected profile to ~/.config/waydroid-keymapper/config.toml and starts/restarts the user systemd service automatically
 
 The GUI is not used by the daemon's input threads, so it adds no GUI work to the latency-sensitive input path.
 
