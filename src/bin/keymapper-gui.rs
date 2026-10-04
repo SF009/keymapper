@@ -1940,7 +1940,7 @@ fn build_ui(app: &Application) {
     profile_list.set_vexpand(true);
 
     let bindings_box = GtkBox::new(Orientation::Vertical, 6);
-    let selected_editor = GtkBox::new(Orientation::Vertical, 7);
+    let selected_editor_box = GtkBox::new(Orientation::Vertical, 7);
 
     let canvas = DrawingArea::new();
     canvas.set_content_width(860);
@@ -2014,7 +2014,7 @@ fn build_ui(app: &Application) {
         state: state.clone(),
         profile_list: profile_list.clone(),
         bindings_box: bindings_box.clone(),
-        selected_editor: selected_editor.clone(),
+        selected_editor: selected_editor_box.clone(),
         canvas: canvas.clone(),
         status: status.clone(),
         profile_name: profile_name.clone(),
@@ -2138,7 +2138,7 @@ fn build_ui(app: &Application) {
     add_margins(&center, 8);
     center.append(&canvas);
     let editor_card = section(&center, "Selected control");
-    editor_card.append(&selected_editor);
+    editor_card.append(&selected_editor_box);
     let editor_scroll = ScrolledWindow::new();
     editor_scroll.set_policy(PolicyType::Never, PolicyType::Automatic);
     editor_scroll.set_child(Some(&editor_card));
