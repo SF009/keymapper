@@ -797,8 +797,7 @@ fn desktop_entry()->String{
 }
 
 fn udev_rules_text()->&'static str{
-    r#"KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"
-SUBSYSTEM=="input", KERNEL=="event*", MODE="0660", GROUP="input", TAG+="uaccess"
+    r#"SUBSYSTEM=="input", KERNEL=="event*", MODE="0660", GROUP="input", TAG+="uaccess"
 "#
 }
 
