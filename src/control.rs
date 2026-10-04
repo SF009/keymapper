@@ -24,9 +24,9 @@ pub extern "C" fn signal_handler(_: libc::c_int) {
 
 pub fn install_signal_handlers() {
     unsafe {
-        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::c_int);
-        libc::signal(libc::SIGINT, signal_handler as *const () as libc::c_int);
-        libc::signal(libc::SIGHUP, signal_handler as *const () as libc::c_int);
+        libc::signal(libc::SIGTERM, signal_handler as usize);
+        libc::signal(libc::SIGINT, signal_handler as usize);
+        libc::signal(libc::SIGHUP, signal_handler as usize);
     }
 }
 
