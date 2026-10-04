@@ -101,10 +101,23 @@ pub fn spawn_server(mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->io::
             let _=fs::set_permissions(parent,fs::Permissions::from_mode(0o700));
         }
     }
-    match fs::remove_file(&path){
-        Ok(())=>{},
-        Err(e) if e.kind()==io::ErrorKind::NotFound=>{},
-        Err(e)=>return Err(e),
+    if path.exists(){
+        match UnixStream::connect(&path){
+            Ok(mut stream)=>{
+                let _=stream.set_read_timeout(Some(Duration::from_millis(100)));
+                let _=stream.set_write_timeout(Some(Duration::from_millis(100)));
+                let _=stream.write_all(b"ping\n");
+                let mut reply=String::new();
+                let _=stream.read_to_string(&mut reply);
+                if reply.trim()=="OK pong"{
+                    return Err(io::Error::new(io::ErrorKind::AddrInUse,"another waydroid-keymapper instance is already running"));
+                }
+                let _=fs::remove_file(&path);
+            }
+            Err(_) =>{
+                let _=fs::remove_file(&path);
+            }
+        }
     }
     let listener=UnixListener::bind(&path)?;
     let _=fs::set_permissions(&path,fs::Permissions::from_mode(0o600));
