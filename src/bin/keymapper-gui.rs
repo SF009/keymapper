@@ -258,6 +258,14 @@ fn display_name(path:&Path)->String{
     path.file_stem().and_then(|x|x.to_str()).unwrap_or("profile").to_string()
 }
 
+fn safe_profile_name(name:&str)->Option<String>{
+    let safe=name.chars()
+        .map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'})
+        .collect::<String>();
+    let safe=safe.trim_matches('_').to_string();
+    if safe.is_empty()||safe=="."||safe==".." {None} else {Some(safe)}
+}
+
 fn clamp(v:f64)->f32{v.clamp(0.,1.) as f32}
 
 fn add_margins<W:gtk4::prelude::WidgetExt>(w:&W,m:i32){
@@ -715,9 +723,7 @@ fn save_current(ui:&Ui)->Result<(),String>{
     sync_state_from_form(ui);
     let name=ui.profile_name.text().trim().to_string();
     if name.is_empty(){return Err("Profile name is empty".into())}
-    let safe=name.chars().map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'}).collect::<String>();
-    let safe=safe.trim_matches('_').to_string();
-    if safe.is_empty(){return Err("Invalid profile name".into())}
+    let safe=safe_profile_name(&name).ok_or_else(||"Invalid profile name".to_string())?;
 
     let mut st=ui.state.borrow_mut();
     let old_path=st.profile_path.clone();
@@ -1022,9 +1028,17 @@ fn runtime_control(ui:&Ui,command:&str){
 }
 
 fn waydroid_action(ui:&Ui,action:&str){
-    let result=Command::new("waydroid").args(["session",action]).spawn();
-    match result{
-        Ok(_)=>set_status(ui,&format!("Waydroid session {action} requested")),
+    match Command::new("waydroid").args(["session",action]).output(){
+        Ok(out) if out.status.success()=>{
+            let msg=String::from_utf8_lossy(&out.stdout).trim().replace('\n'," • ");
+            if msg.is_empty(){set_status(ui,&format!("Waydroid session {action}: OK"))}
+            else{set_status(ui,&format!("Waydroid session {action}: {msg}"))}
+        }
+        Ok(out)=>{
+            let err=String::from_utf8_lossy(&out.stderr).trim().replace('\n'," • ");
+            let err=if err.is_empty(){String::from_utf8_lossy(&out.stdout).trim().to_string()}else{err};
+            set_status(ui,&format!("Waydroid session {action} failed: {err}"));
+        }
         Err(e)=>set_status(ui,&format!("Waydroid command failed: {e}")),
     }
 }
@@ -1113,8 +1127,11 @@ fn ask_name(parent:&ApplicationWindow,title:&str,initial:&str,callback:impl Fn(S
 fn new_profile(ui:&Ui,app:&ApplicationWindow){
     let ui2=ui.clone();
     ask_name(app,"New profile","pubg",move|name|{
-        if name.is_empty(){return}
-        let path=profiles_dir().join(format!("{name}.toml"));
+        let Some(safe)=safe_profile_name(&name) else {
+            set_status(&ui2,"Invalid profile name");
+            return
+        };
+        let path=profiles_dir().join(format!("{safe}.toml"));
         if path.exists(){set_status(&ui2,"Profile already exists");return}
         let cfg=default_config();
         match save_profile(&path,&cfg){
@@ -1133,8 +1150,11 @@ fn duplicate_profile(ui:&Ui,app:&ApplicationWindow){
     let current=ui.state.borrow().profile_path.clone();
     let ui2=ui.clone();
     ask_name(app,"Duplicate profile",&format!("{}_copy",display_name(&current)),move|name|{
-        if name.is_empty(){return}
-        let path=profiles_dir().join(format!("{name}.toml"));
+        let Some(safe)=safe_profile_name(&name) else {
+            set_status(&ui2,"Invalid profile name");
+            return
+        };
+        let path=profiles_dir().join(format!("{safe}.toml"));
         if path.exists(){set_status(&ui2,"Profile already exists");return}
         let cfg=ui2.state.borrow().cfg.clone();
         match save_profile(&path,&cfg){
@@ -1487,4 +1507,17 @@ fn main(){
     let app=Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run();
+}
+
+
+#[cfg(test)]
+mod profile_name_tests{
+    use super::safe_profile_name;
+
+    #[test]
+    fn profile_name_is_sanitized(){
+        assert_eq!(safe_profile_name("Free Fire").as_deref(),Some("Free_Fire"));
+        assert_eq!(safe_profile_name("../escape").as_deref(),Some("escape"));
+        assert!(safe_profile_name("___").is_none());
+    }
 }
