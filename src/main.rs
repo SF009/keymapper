@@ -1,8 +1,8 @@
-use keymapper::{
+use waydroid_keymapper::{
  config::Config,
  input::{spawn_input,InputKind,RuntimeControl},
 };
-use keymapper::{control,touch::Mapper};
+use waydroid_keymapper::{control,touch::Mapper};
 use std::{env,error::Error,fs,path::PathBuf,sync::{Arc,Mutex},thread,time::Duration};
 use touch::Mapper;
 
