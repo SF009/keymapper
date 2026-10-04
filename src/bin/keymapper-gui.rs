@@ -1,4 +1,4 @@
-use waydroid_keymapper::{config,input,touch,control};
+use waydroid_keymapper::{config,input,control};
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap,TouchSettings};
 use gtk4::prelude::*;
@@ -404,7 +404,7 @@ fn draw_canvas(ui_state:&Rc<RefCell<State>>,_area:&DrawingArea,cr:&cairo::Contex
         cr.set_source_rgb(0.30,1.,0.50);
         cr.arc(x,y,r,0.,std::f64::consts::TAU);let _=cr.stroke();
         cr.arc(x,y,5.,0.,std::f64::consts::TAU);let _=cr.fill();
-        cr.move_to(x+8.,y-8.);cr.show_text("WASD");
+        cr.move_to(x+8.,y-8.);let _=cr.show_text("WASD");
     }
 
     let draw_marker=|sel:BindingRef,x:f32,y:f32,text:&str|{
@@ -421,7 +421,7 @@ fn draw_canvas(ui_state:&Rc<RefCell<State>>,_area:&DrawingArea,cr:&cairo::Contex
             cr.arc(px,py,radius+4.,0.,std::f64::consts::TAU);let _=cr.stroke();
         }
         cr.set_source_rgb(1.,1.,1.);
-        cr.move_to(px+radius+5.,py+4.);cr.show_text(text);
+        cr.move_to(px+radius+5.,py+4.);let _=cr.show_text(text);
     };
 
     if let Some(a)=&cfg.aim{draw_marker(BindingRef::Aim,a.center_x,a.center_y,"AIM");}
@@ -432,7 +432,7 @@ fn draw_canvas(ui_state:&Rc<RefCell<State>>,_area:&DrawingArea,cr:&cairo::Contex
 
     cr.set_source_rgb(0.60,0.63,0.68);
     cr.move_to(ox,oy+vh+22.);
-    cr.show_text("Click a marker to select • drag to reposition • Save to persist");
+    let _=cr.show_text("Click a marker to select • drag to reposition • Save to persist");
 }
 
 fn form_row(grid:&Grid,row:i32,label:&str,w:&impl gtk4::prelude::WidgetExt){
