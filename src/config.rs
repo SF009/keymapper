@@ -155,7 +155,7 @@ mod tests{
   let mut c=base();
   c.aim=Some(Aim{
    button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
-   slot:1,invert_y:false,mode:"relative".into(),
+   slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
   });
   assert!(c.validate().is_ok());
  }
@@ -165,7 +165,7 @@ mod tests{
   let mut c=base();
   c.joystick=Some(Joystick{
    up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-   center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+   center_x:0.15,center_y:0.76,radius:0.085,normalize_diagonal:true,slot:0,
   });
   c.holds.push(Hold{key:"W".into(),x:0.3,y:0.3,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("keyboard conflict")));
@@ -177,7 +177,7 @@ mod tests{
   let mut c=base();
   c.aim=Some(Aim{
    button:"MOUSE_LEFT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
-   slot:1,invert_y:false,mode:"touch".into(),
+   slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"touch".into(),
   });
   c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:0.8,y:0.8,slot:2});
   assert!(c.conflicts().iter().any(|x|x.contains("mouse conflict")));
@@ -197,7 +197,7 @@ mod tests{
   let mut c=base();
   c.joystick=Some(Joystick{
    up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
-   center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+   center_x:0.15,center_y:0.76,radius:0.085,normalize_diagonal:true,slot:0,
   });
   assert!(c.validate().is_ok());
   assert!(c.validate_runtime().is_err());
@@ -209,7 +209,7 @@ mod tests{
   c.devices.keyboard=Some("/dev/input/event0".into());
   c.aim=Some(Aim{
    button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
-   slot:1,invert_y:false,mode:"relative".into(),
+   slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
   });
   assert!(c.validate_runtime().is_err());
 
