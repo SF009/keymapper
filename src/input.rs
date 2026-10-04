@@ -70,9 +70,9 @@ impl RuntimeControl{
     fn event_fd(&self)->i32{self.mouse_event.as_raw_fd()}
 }
 
-fn best_effort_realtime(enabled:bool,thread_name:&str){
+fn best_effort_realtime(enabled:bool,priority:i32,thread_name:&str){
     if !enabled{return}
-    let mut param=libc::sched_param{sched_priority:10};
+    let mut param=libc::sched_param{sched_priority:priority};
     let rc=unsafe{libc::sched_setscheduler(0,libc::SCHED_FIFO,&mut param)};
     if rc<0{
         // User services normally lack CAP_SYS_NICE. The preference is therefore
@@ -98,7 +98,8 @@ fn keyboard_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeContro
         ),
         Err(_)=>return,
     };
-    best_effort_realtime(realtime,"wd-keyboard");
+    let priority=match mapper.lock(){Ok(m)=>m.config().performance.realtime_priority,Err(_)=>10};
+    best_effort_realtime(realtime,priority,"wd-keyboard");
 
     // Emergency unlock must remain available even while the keyboard itself
     // is grabbed. Ctrl+Alt+F12 is intentionally independent of the profile.
@@ -188,7 +189,8 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
         Ok(m)=>(m.config().performance.grab,m.config().performance.realtime),
         Err(_)=>return,
     };
-    best_effort_realtime(realtime,"wd-mouse");
+    let priority=match mapper.lock(){Ok(m)=>m.config().performance.realtime_priority,Err(_)=>10};
+    best_effort_realtime(realtime,priority,"wd-mouse");
 
     let mut locked=control.mouse_locked.load(Ordering::Acquire);
     if grab && locked{

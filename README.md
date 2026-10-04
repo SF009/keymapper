@@ -8,7 +8,8 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - evdev mouse capture
 - WASD normalized analog joystick
 - mouse-button held aim
-- configurable mouse sensitivity and Y inversion
+- configurable mouse sensitivity, X/Y inversion, independent X/Y aim scaling and absolute-mode edge margin
+- configurable joystick diagonal normalization
 - touch and relative/unbounded FPS aim backends
 - runtime mouse lock/unlock with configurable toggle key (F8 by default)
 - conflict detection for physical key/button reuse and reserved lock key
@@ -110,7 +111,7 @@ The GUI supports:
 - keyboard TAP/HOLD mappings
 - mouse TAP/HOLD mappings
 - optional WASD joystick
-- optional mouse aim mapping with sensitivity and Y inversion
+- optional mouse aim mapping with sensitivity, X/Y scaling, X/Y inversion and absolute-mode edge margin
 - device selection from detected evdev devices
 - 16:9 touch-map preview with click-to-select and drag-to-position
 - normalized X/Y and touch-slot editing
@@ -153,6 +154,7 @@ Waydroid's modern hardware composer also has an Android pointer-capture path tha
 - EVIOCGRAB mouse/keyboard capture when enabled
 - runtime mouse lock toggle: F8 by default; **mouse lock is off by default** so starting the daemon never captures the desktop cursor unexpectedly; locking releases active aim/fire touch slots on unlock
 - relative mouse motion is batched per evdev read before being written to Android
+- configurable realtime scheduler priority (best-effort), FIFO retries/wait/reconnect backoff and Android touch pressure/major/minor tuning
 - conflict validation prevents ambiguous physical-input ownership
 
 The project is intentionally small enough to run comfortably on low-RAM systems.
@@ -165,3 +167,10 @@ GPL-3.0-or-later
 ### Mouse lock safety
 
 Locking the mouse intentionally grabs the selected physical evdev mouse so GNOME cannot consume the same movement stream. The GUI therefore cannot receive mouse clicks while the lock is active. Use the configured toggle key (default `F8`) to unlock; `Ctrl+Alt+F12` is a built-in emergency unlock and remains available even when the keyboard is grabbed.
+
+
+## Advanced tuning
+
+The GUI exposes low-latency tuning under **Performance** and **Touch input tuning**. `realtime_priority` is best-effort because an unprivileged user service may not have permission to enter `SCHED_FIFO`; the mapper continues normally when the request is denied. FIFO retries/wait/reconnect values are bounded during validation to prevent accidental long stalls in the input path. Touch pressure/major/minor values are advanced compatibility controls for Android input-device interpretation.
+
+The absolute aim `edge_margin` controls how close a touch-mode aim point may approach the screen edge before the mapper returns it to the configured aim center. The default is `0.12`; use `0` to effectively disable the early margin while retaining the final normalized bounds.
