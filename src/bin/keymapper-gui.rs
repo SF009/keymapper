@@ -20,6 +20,7 @@ use std::{
     path::{Path,PathBuf},
     process::Command,
     rc::Rc,
+    sync::mpsc,
     time::Duration,
 };
 
@@ -947,6 +948,38 @@ fn device_access(path:Option<String>)->String{
     }
 }
 
+fn run_background<F>(ui:&Ui,busy:&str,task:F)
+where
+    F:FnOnce()->Result<String,String>+Send+'static,
+{
+    let ui2=ui.clone();
+    set_status(ui,busy);
+    let (tx,rx)=mpsc::channel();
+    std::thread::spawn(move||{
+        let _=tx.send(task());
+    });
+    glib::timeout_add_local(Duration::from_millis(50),move||{
+        match rx.try_recv(){
+            Ok(Ok(msg))=>{
+                if msg.is_empty(){set_status(&ui2,"Done ✓")}else{set_status(&ui2,&msg);}
+                update_runtime_status(&ui2);
+                glib::ControlFlow::Break
+            }
+            Ok(Err(err))=>{
+                set_status(&ui2,&err);
+                update_runtime_status(&ui2);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty)=>glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected)=>{
+                set_status(&ui2,"Background operation aborted");
+                update_runtime_status(&ui2);
+                glib::ControlFlow::Break
+            }
+        }
+    });
+}
+
 fn update_runtime_status(ui:&Ui){
     let svc=runtime_service_state();
     ui.runtime_status.set_text(&format!("Service: {svc}"));
@@ -1028,19 +1061,21 @@ fn runtime_control(ui:&Ui,command:&str){
 }
 
 fn waydroid_action(ui:&Ui,action:&str){
-    match Command::new("waydroid").args(["session",action]).output(){
-        Ok(out) if out.status.success()=>{
-            let msg=String::from_utf8_lossy(&out.stdout).trim().replace('\n'," • ");
-            if msg.is_empty(){set_status(ui,&format!("Waydroid session {action}: OK"))}
-            else{set_status(ui,&format!("Waydroid session {action}: {msg}"))}
+    let action=action.to_string();
+    run_background(ui,&format!("Waydroid session {action}: starting…"),move||{
+        match Command::new("waydroid").args(["session",&action]).output(){
+            Ok(out) if out.status.success()=>{
+                let msg=String::from_utf8_lossy(&out.stdout).trim().replace('\n'," • ");
+                Ok(if msg.is_empty(){format!("Waydroid session {action}: OK")}else{format!("Waydroid session {action}: {msg}")})
+            }
+            Ok(out)=>{
+                let err=String::from_utf8_lossy(&out.stderr).trim().replace('\n'," • ");
+                let err=if err.is_empty(){String::from_utf8_lossy(&out.stdout).trim().to_string()}else{err};
+                Err(format!("Waydroid session {action} failed: {err}"))
+            }
+            Err(e)=>Err(format!("Waydroid command failed: {e}")),
         }
-        Ok(out)=>{
-            let err=String::from_utf8_lossy(&out.stderr).trim().replace('\n'," • ");
-            let err=if err.is_empty(){String::from_utf8_lossy(&out.stdout).trim().to_string()}else{err};
-            set_status(ui,&format!("Waydroid session {action} failed: {err}"));
-        }
-        Err(e)=>set_status(ui,&format!("Waydroid command failed: {e}")),
-    }
+    });
 }
 
 fn waydroid_state()->String{
@@ -1422,30 +1457,24 @@ fn build_ui(app:&Application){
     attach_key_capture(&mouse_toggle,&capture_toggle,&status);
 
     let ui2=ui.clone();enable_btn.connect_clicked(move |_|{
-        match service_action("enable"){Ok(_)=>set_status(&ui2,"Daemon autostart enabled ✓"),Err(e)=>set_status(&ui2,&format!("Enable failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Enabling daemon at login…",||service_action("enable"));
     });
     let ui2=ui.clone();disable_btn.connect_clicked(move |_|{
-        match service_action("disable"){Ok(_)=>set_status(&ui2,"Daemon autostart disabled"),Err(e)=>set_status(&ui2,&format!("Disable failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Disabling daemon autostart…",||service_action("disable"));
     });
     let ui2=ui.clone();diagnostics_btn.connect_clicked(move |_|diagnostics(&ui2));
 
     let ui2=ui.clone();install_btn.connect_clicked(move |_|{
-        match install_runtime(){Ok(())=>set_status(&ui2,"Runtime installed/repaired ✓"),Err(e)=>set_status(&ui2,&format!("Runtime setup failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Installing / repairing runtime…",install_runtime);
     });
     let ui2=ui.clone();start_btn.connect_clicked(move |_|{
-        match service_action("start"){Ok(_)=>set_status(&ui2,"Daemon service started ✓"),Err(e)=>set_status(&ui2,&format!("Start failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Starting daemon…",||service_action("start"));
     });
     let ui2=ui.clone();stop_btn.connect_clicked(move |_|{
-        match service_action("stop"){Ok(_)=>set_status(&ui2,"Daemon service stopped"),Err(e)=>set_status(&ui2,&format!("Stop failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Stopping daemon…",||service_action("stop"));
     });
     let ui2=ui.clone();restart_btn.connect_clicked(move |_|{
-        match service_action("restart"){Ok(_)=>set_status(&ui2,"Daemon service restarted ✓"),Err(e)=>set_status(&ui2,&format!("Restart failed: {e}"))}
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Restarting daemon…",||service_action("restart"));
     });
     let ui2=ui.clone();lock_btn.connect_clicked(move |_|runtime_control(&ui2,"lock"));
     let ui2=ui.clone();unlock_btn.connect_clicked(move |_|runtime_control(&ui2,"unlock"));
@@ -1477,11 +1506,7 @@ fn build_ui(app:&Application){
     let ui2=ui.clone();apply.connect_clicked(move |_|apply_and_run(&ui2));
     let ui2=ui.clone();validate.connect_clicked(move |_|validate_current(&ui2));
     let ui2=ui.clone();fix_input.connect_clicked(move |_|{
-        match install_input_permissions(){
-            Ok(msg)=>set_status(&ui2,&msg),
-            Err(e)=>set_status(&ui2,&format!("Input permission repair failed: {e}")),
-        }
-        update_runtime_status(&ui2);
+        run_background(&ui2,"Repairing input permissions…",install_input_permissions);
     });
 
     let ui2=ui.clone();refresh_dev.connect_clicked(move |_|{
