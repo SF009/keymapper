@@ -724,10 +724,19 @@ fn selected_editor(ui: &Ui) {
 }
 
 fn select_binding(ui: &Ui, sel: BindingRef) {
-    ui.state.borrow_mut().selected = Some(sel);
+    {
+        let mut state = ui.state.borrow_mut();
+        state.selected = Some(sel);
+    }
+
     selected_editor(ui);
     ui.canvas.queue_draw();
-    ui.status.set_text(&format!("Selected: {}", binding_label(sel, &ui.state.borrow().cfg)));
+
+    let label = {
+        let state = ui.state.borrow();
+        binding_label(sel, &state.cfg)
+    };
+    ui.status.set_text(&format!("Selected: {label}"));
 }
 
 fn delete_binding(ui: &Ui, sel: BindingRef) {
@@ -2137,8 +2146,17 @@ fn build_ui(app: &Application) {
     let center = GtkBox::new(Orientation::Vertical, 7);
     add_margins(&center, 8);
     center.append(&canvas);
-    let editor_card = section(&center, "Selected control");
+
+    // The editor card belongs inside the scrolled window. Do not first
+    // append it to center because GTK4 widgets cannot have two parents.
+    let editor_card = GtkBox::new(Orientation::Vertical, 7);
+    editor_card.add_css_class("card");
+    let editor_title = Label::new(Some("Selected control"));
+    editor_title.add_css_class("section-title");
+    editor_title.set_halign(gtk4::Align::Start);
+    editor_card.append(&editor_title);
     editor_card.append(&selected_editor_box);
+
     let editor_scroll = ScrolledWindow::new();
     editor_scroll.set_policy(PolicyType::Never, PolicyType::Automatic);
     editor_scroll.set_child(Some(&editor_card));
@@ -2363,7 +2381,14 @@ fn build_ui(app: &Application) {
     let ptn_click = pointer_to_norm.clone();
     click.connect_released(move |_, _, x, y| {
         let (nx, ny) = ptn_click(x, y);
-        if let Some(sel) = nearest_binding(&ui_click.state.borrow().cfg, nx, ny) {
+        // Keep the RefCell borrow scoped to the lookup. Otherwise GTK's
+        // callback can still hold the immutable borrow when select_binding()
+        // requests a mutable borrow, causing "RefCell already borrowed".
+        let selected = {
+            let state = ui_click.state.borrow();
+            nearest_binding(&state.cfg, nx, ny)
+        };
+        if let Some(sel) = selected {
             select_binding(&ui_click, sel);
         }
     });
