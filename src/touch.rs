@@ -206,14 +206,13 @@ impl Mapper{
         let mut mouse_hold_slots=[false;16];
         for x in &cfg.mouse_holds{mouse_hold_slots[x.slot as usize]=true;}
 
-        let mouse_locked=cfg.performance.mouse_lock;
         Ok(Self{
             touch:Pipe::new(cfg.touch_fifo()),
             pointer:Pipe::new(cfg.pointer_fifo()),
             cfg:Arc::new(cfg),
             slots:[C{down:false};16],
             next:1,
-            mx:0.5,my:0.5,aim:false,mouse_locked,
+            mx:0.5,my:0.5,aim:false,mouse_locked:false,
             rel_acc_x:0.0,rel_acc_y:0.0,
             keys:[false;MAX_INPUT_CODE],
             key_actions:key_actions.into_boxed_slice(),
