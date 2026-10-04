@@ -358,7 +358,7 @@ impl Config {
                 || !(a.sensitivity > 0.0 && a.sensitivity <= 100.0)
                 || !(a.scale_x > 0.0 && a.scale_x <= 20.0)
                 || !(a.scale_y > 0.0 && a.scale_y <= 20.0)
-                || !(0.0..0.5).contains(&a.edge_margin)
+                || !(0.0..=0.49).contains(&a.edge_margin)
                 || a.slot >= 16
             {
                 return Err("invalid aim parameters".into());
