@@ -139,14 +139,8 @@ mod tests{
 
  #[test]
  fn missing_mouse_lock_defaults_to_unlocked(){
-  let mut v=toml::toml!{
-   display={width=1920,height=1080},
-   devices={keyboard="/dev/input/event0",mouse="/dev/input/event1"},
-   aim={button="MOUSE_RIGHT",center_x=0.5,center_y=0.5,sensitivity=2.0,slot=1,invert_y=false,mode="relative"},
-  };
   let p:Performance=toml::from_str("grab=true\nrealtime=true\n").unwrap();
   assert!(!p.mouse_lock);
-  let _=&mut v;
  }
 
  #[test]
