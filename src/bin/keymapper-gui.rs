@@ -28,12 +28,12 @@ const USER_SERVICE: &str = "waydroid-keymapper.service";
 
 const APP_CSS: &str = r#"
 window {
-  background: #0b0f14;
+  background-color: #0b0f14;
   color: #e8edf5;
   font-family: "Cantarell", "Segoe UI", sans-serif;
 }
 .header {
-  background: #101722;
+  background-color: #101722;
   border-bottom: 1px solid #263140;
   padding: 10px 12px;
 }
@@ -43,7 +43,7 @@ window {
 }
 .subtitle { color: #8b98aa; font-size: 12px; }
 .card {
-  background: #111823;
+  background-color: #111823;
   border: 1px solid #273344;
   border-radius: 12px;
   padding: 12px;
@@ -58,7 +58,7 @@ window {
 .help { color: #98a5b7; font-size: 11px; }
 .muted { color: #7e8a9b; }
 .badge-ok {
-  background: #153523;
+  background-color: #153523;
   color: #73e0a2;
   border: 1px solid #2d6f4b;
   border-radius: 8px;
@@ -66,7 +66,7 @@ window {
   font-weight: 800;
 }
 .badge-warn {
-  background: #342915;
+  background-color: #342915;
   color: #f6c56c;
   border: 1px solid #77581f;
   border-radius: 8px;
@@ -74,7 +74,7 @@ window {
   font-weight: 800;
 }
 .badge-danger {
-  background: #351d23;
+  background-color: #351d23;
   color: #ff8896;
   border: 1px solid #6d2e3a;
   border-radius: 8px;
@@ -86,21 +86,21 @@ button {
   min-height: 34px;
 }
 .primary {
-  background: #2f7cf6;
+  background-color: #2f7cf6;
   color: white;
   font-weight: 800;
 }
 .success {
-  background: #1e7d4f;
+  background-color: #1e7d4f;
   color: white;
   font-weight: 800;
 }
 .danger {
-  background: #5c2932;
+  background-color: #5c2932;
   color: #ffd9dd;
 }
 entry, spinbutton, combobox {
-  background: #151e2a;
+  background-color: #151e2a;
   color: #ecf2fa;
   border: 1px solid #2d3b4e;
   border-radius: 8px;
@@ -109,17 +109,17 @@ entry:focus, spinbutton:focus, combobox:focus {
   border-color: #4f98ff;
 }
 list, listview {
-  background: #0e151e;
+  background-color: #0e151e;
 }
 list row {
   border-radius: 7px;
   margin: 2px 0;
 }
 list row:selected {
-  background: #244c7f;
+  background-color: #244c7f;
 }
 .preview {
-  background: #080c12;
+  background-color: #080c12;
   border-radius: 12px;
   border: 1px solid #263140;
 }
@@ -2488,7 +2488,8 @@ fn build_ui(app: &Application) {
 
     {
         let ui = ui.clone();
-        new_btn.connect_clicked(move |_| new_profile(&ui, &window));
+        let window_for_new = window.clone();
+        new_btn.connect_clicked(move |_| new_profile(&ui, &window_for_new));
     }
     {
         let ui = ui.clone();
