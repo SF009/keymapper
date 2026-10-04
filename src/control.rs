@@ -33,7 +33,11 @@ pub fn socket_path()->PathBuf{
     if let Some(dir)=env::var_os("XDG_RUNTIME_DIR"){
         return PathBuf::from(dir).join("waydroid-keymapper.sock");
     }
-    PathBuf::from(format!("/tmp/waydroid-keymapper-{}.sock",unsafe{libc::getuid()}))
+    home_dir().join(".cache/waydroid-keymapper/waydroid-keymapper.sock")
+}
+
+fn home_dir()->PathBuf{
+    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("."))
 }
 
 pub fn request(command:&str)->Result<String,Box<dyn Error>>{
@@ -84,7 +88,14 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
 
 pub fn spawn_server(mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->io::Result<()>{
     let path=socket_path();
-    if let Some(parent)=path.parent(){fs::create_dir_all(parent)?;}
+    if let Some(parent)=path.parent(){
+        fs::create_dir_all(parent)?;
+        // The /tmp fallback was replaced with a private per-user directory.
+        // Keep that directory inaccessible to other users.
+        if parent.to_string_lossy().contains(".cache/waydroid-keymapper"){
+            let _=fs::set_permissions(parent,fs::Permissions::from_mode(0o700));
+        }
+    }
     match fs::remove_file(&path){
         Ok(())=>{},
         Err(e) if e.kind()==io::ErrorKind::NotFound=>{},
