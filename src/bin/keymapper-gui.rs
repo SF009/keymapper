@@ -1,7 +1,4 @@
-#[path="../config.rs"] mod config;
-#[path="../input.rs"] mod input;
-#[path="../touch.rs"] mod touch;
-#[path="../control.rs"] mod control;
+use keymapper::{config,input,touch,control};
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap,TouchSettings};
 use gtk4::prelude::*;
