@@ -477,3 +477,27 @@ pub fn button_code(s:&str)->Result<u16,Box<dyn Error>>{
   _=>Err(format!("unknown button {s}").into())
  }
 }
+
+
+#[cfg(test)]
+mod runtime_control_tests{
+    use super::*;
+
+    #[test]
+    fn toggle_respects_grab_permission(){
+        let control=RuntimeControl::new(false).unwrap();
+        assert_eq!(control.toggle(false),Some(false));
+        assert_eq!(control.toggle(false),None);
+
+        assert_eq!(control.toggle(true),Some(true));
+        assert!(control.mouse_locked.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn emergency_unlock_always_clears_state(){
+        let control=RuntimeControl::new(true).unwrap();
+        assert!(control.mouse_locked.load(Ordering::Acquire));
+        control.force_unlock();
+        assert!(!control.mouse_locked.load(Ordering::Acquire));
+    }
+}
