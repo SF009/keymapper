@@ -49,7 +49,7 @@ fn main()->Result<(),Box<dyn Error>>{
    for x in conflicts{eprintln!("  - {x}")}
    return Err("configuration has input conflicts".into())
   }
-  cfg.validate()?;
+  cfg.validate_runtime()?;
   println!("configuration OK");
   println!("touch fifo: {}",cfg.touch_fifo());
   println!("pointer fifo: {}",cfg.pointer_fifo());
