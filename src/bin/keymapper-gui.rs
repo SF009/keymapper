@@ -782,8 +782,8 @@ fn install_user_executable(src:&Path,dst:&Path)->Result<(),String>{
 }
 
 fn desktop_entry()->String{
-    let exe=gui_install_path().to_string_lossy().replace('\\',"\\\\").replace('"',"\\"");
-    format!("[Desktop Entry]\\nType=Application\\nName=Waydroid Keymapper\\nComment=Low-latency Waydroid keyboard and mouse profile editor\\nExec=\\"{}\\"\\nIcon=input-gaming\\nTerminal=false\\nCategories=Utility;Game;\\nKeywords=Waydroid;Android;Gaming;Keymapper;\\n",exe)
+    let exe=gui_install_path().to_string_lossy().replace('\\',"\\\\").replace(' ',"\\ ");
+    format!("[Desktop Entry]\\nType=Application\\nName=Waydroid Keymapper\\nComment=Low-latency Waydroid keyboard and mouse profile editor\\nExec={}\\nIcon=input-gaming\\nTerminal=false\\nCategories=Utility;Game;\\nKeywords=Waydroid;Android;Gaming;Keymapper;\\n",exe)
 }
 
 fn udev_rules_text()->&'static str{
