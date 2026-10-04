@@ -920,7 +920,6 @@ pub fn button_code(s: &str) -> Result<u16, Box<dyn Error>> {
         "MOUSE_FORWARD" | "FORWARD" | "BTN_FORWARD" => Ok(KeyCode::BTN_FORWARD.0),
         "MOUSE_BACK" | "BACK" | "BTN_BACK" => Ok(KeyCode::BTN_BACK.0),
         "MOUSE_TASK" | "TASK" | "BTN_TASK" => Ok(KeyCode::BTN_TASK.0),
-        "MOUSE_SIDE2" | "MOUSE_6" | "MOUSE6" => Ok(KeyCode::BTN_SIDE2.0),
         _ => Err(format!("unknown mouse button {s}").into()),
     }
 }
