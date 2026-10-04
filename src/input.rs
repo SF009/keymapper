@@ -255,10 +255,13 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
         }
 
         if fds[0].revents&libc::POLLIN!=0{
+            // After Unlock the compositor owns the device again. Do not read a
+            // pending batch here, otherwise we would consume events intended
+            // for GNOME after releasing EVIOCGRAB.
+            if !locked{continue}
             let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
             match fetched{
                 Ok(events)=>{
-                    if !locked{continue}
                     let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
                     let mut dx=0i32;
                     let mut dy=0i32;
