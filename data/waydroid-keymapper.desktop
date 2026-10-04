@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Waydroid Keymapper
-Comment=Low-latency Waydroid keyboard and mouse profile editor
-Exec=keymapper-gui
-Icon=input-gaming
-Terminal=false
-Categories=Utility;Game;
-Keywords=Waydroid;Android;Gaming;Keymapper;
