@@ -10,7 +10,24 @@ use std::{
     sync::{Arc,Mutex},
     thread,
     time::Duration,
+    sync::atomic::{AtomicBool,Ordering},
 };
+
+pub static SHUTDOWN:AtomicBool=AtomicBool::new(false);
+
+pub extern "C" fn signal_handler(_:libc::c_int){
+    SHUTDOWN.store(true,Ordering::Release);
+}
+
+pub fn install_signal_handlers(){
+    unsafe{
+        libc::signal(libc::SIGTERM,signal_handler as usize);
+        libc::signal(libc::SIGINT,signal_handler as usize);
+        libc::signal(libc::SIGHUP,signal_handler as usize);
+    }
+}
+
+pub fn shutdown_requested()->bool{SHUTDOWN.load(Ordering::Acquire)}
 
 pub fn socket_path()->PathBuf{
     if let Some(dir)=env::var_os("XDG_RUNTIME_DIR"){
@@ -111,3 +128,6 @@ pub fn spawn_server(mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->io::
 }
 
 use std::os::unix::fs::PermissionsExt;
+
+
+pub fn remove_socket(){let _=fs::remove_file(socket_path());}
