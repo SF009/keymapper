@@ -166,6 +166,9 @@ fn preset_minimal()->Config{
 enum ShooterPreset{FreeFire,Fps,Minimal}
 
 fn apply_preset(ui:&Ui,preset:ShooterPreset){
+    // Capture any unsaved form/device changes before replacing the profile
+    // contents with the selected preset.
+    sync_state_from_form(ui);
     let preset_cfg=match preset{
         ShooterPreset::FreeFire=>preset_free_fire(),
         ShooterPreset::Fps=>preset_fps(),
@@ -1229,6 +1232,7 @@ fn new_profile(ui:&Ui,app:&ApplicationWindow){
 }
 
 fn duplicate_profile(ui:&Ui,app:&ApplicationWindow){
+    sync_state_from_form(ui);
     let current=ui.state.borrow().profile_path.clone();
     let ui2=ui.clone();
     ask_name(app,"Duplicate profile",&format!("{}_copy",display_name(&current)),move|name|{
@@ -1557,6 +1561,7 @@ fn build_ui(app:&Application){
     });
 
     let ui2=ui.clone();refresh_dev.connect_clicked(move |_|{
+        sync_state_from_form(&ui2);
         let cfg=ui2.state.borrow().cfg.clone();
         fill_devices(&ui2.keyboard,&cfg.devices.keyboard,false);
         fill_devices(&ui2.mouse,&cfg.devices.mouse,true);
