@@ -39,9 +39,14 @@ struct Pipe{
     p:String,
     f:Option<std::fs::File>,
     next_connect:std::time::Instant,
+    reconnect_ms:u64,
+    write_retries:u8,
+    write_wait_ms:u64,
 }
 impl Pipe{
-    fn new(p:String)->Self{Self{p,f:None,next_connect:std::time::Instant::now()}}
+    fn new(p:String,reconnect_ms:u64,write_retries:u8,write_wait_ms:u64)->Self{
+        Self{p,f:None,next_connect:std::time::Instant::now(),reconnect_ms:reconnect_ms.max(5),write_retries:write_retries.max(1),write_wait_ms}
+    }
     fn connect(&mut self)->io::Result<()>{
         if self.f.is_some(){return Ok(())}
         let now=std::time::Instant::now();
@@ -51,7 +56,7 @@ impl Pipe{
         let c=std::ffi::CString::new(self.p.as_str()).map_err(|_|io::Error::new(io::ErrorKind::InvalidInput,"invalid FIFO path"))?;
         let fd=unsafe{libc::open(c.as_ptr(),libc::O_WRONLY|libc::O_NONBLOCK|libc::O_CLOEXEC)};
         if fd<0{
-            self.next_connect=now+std::time::Duration::from_millis(25);
+            self.next_connect=now+std::time::Duration::from_millis(self.reconnect_ms);
             return Err(io::Error::last_os_error())
         }
         self.f=Some(unsafe{std::fs::File::from_raw_fd(fd)});
@@ -79,7 +84,7 @@ impl Pipe{
                 let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(25);},}
+            match pipe_write_bounded(f.as_raw_fd(),&v,self.write_retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
             return;
         }
 
@@ -91,14 +96,14 @@ impl Pipe{
             used+=size;
         }
 
-        match pipe_write_bounded(f.as_raw_fd(),&buf[..used]){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
+        match pipe_write_bounded(f.as_raw_fd(),&buf[..used],self.write_retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
     }
 }
 
-fn pipe_write_bounded(fd:i32,data:&[u8])->io::Result<()>{
+fn pipe_write_bounded(fd:i32,data:&[u8],retries:u8,wait_ms:u64)->io::Result<()>{
     // Keep the real-time path bounded: if Waydroid's FIFO reader is temporarily
     // busy, wait only a few short polls instead of blocking the input thread.
-    for _ in 0..3{
+    for _ in 0..retries.max(1){
         let n=unsafe{libc::write(fd,data.as_ptr().cast::<libc::c_void>(),data.len())};
         if n==data.len() as isize{return Ok(())}
         if n<0{
@@ -107,7 +112,7 @@ fn pipe_write_bounded(fd:i32,data:&[u8])->io::Result<()>{
                 Some(libc::EINTR)=>continue,
                 Some(libc::EAGAIN)|Some(libc::EWOULDBLOCK)=>{
                     let mut p=libc::pollfd{fd,events:libc::POLLOUT,revents:0};
-                    let rc=unsafe{libc::poll(&mut p,1,1)};
+                    let rc=unsafe{libc::poll(&mut p,1,wait_ms.min(i32::MAX as u64) as i32)};
                     if rc>0{continue}
                     if rc==0{break}
                     if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
@@ -137,6 +142,7 @@ struct JoyRuntime{
     center_x:f32,
     center_y:f32,
     radius:f32,
+    normalize_diagonal:bool,
     slot:u8,
 }
 
@@ -147,7 +153,10 @@ struct AimRuntime{
     center_y:f32,
     sensitivity:f32,
     slot:u8,
+    invert_x:bool,
     invert_y:bool,
+    scale_x:f32,
+    scale_y:f32,
     relative:bool,
 }
 
@@ -168,6 +177,7 @@ pub struct Mapper{
     mouse_actions:Box<[Option<MouseAction>]>,
     joystick:Option<JoyRuntime>,
     aim_cfg:Option<AimRuntime>,
+    touch_cfg:(i32,i32,i32),
     mouse_hold_slots:[bool;16],
 }
 
@@ -186,7 +196,7 @@ impl Mapper{
             key_actions[down as usize]=Some(KeyAction::Joystick);
             key_actions[left as usize]=Some(KeyAction::Joystick);
             key_actions[right as usize]=Some(KeyAction::Joystick);
-            JoyRuntime{up,down,left,right,center_x:j.center_x,center_y:j.center_y,radius:j.radius,slot:j.slot}
+            JoyRuntime{up,down,left,right,center_x:j.center_x,center_y:j.center_y,radius:j.radius,normalize_diagonal:j.normalize_diagonal,slot:j.slot}
         });
 
         let aim_cfg=cfg.aim.as_ref().map(|a|{
@@ -194,8 +204,8 @@ impl Mapper{
             mouse_actions[button as usize]=Some(MouseAction::Aim);
             AimRuntime{
                 button,center_x:a.center_x,center_y:a.center_y,
-                sensitivity:a.sensitivity,slot:a.slot,invert_y:a.invert_y,
-                relative:a.mode.eq_ignore_ascii_case("relative"),
+                sensitivity:a.sensitivity,slot:a.slot,invert_x:a.invert_x,invert_y:a.invert_y,
+                scale_x:a.scale_x,scale_y:a.scale_y,relative:a.mode.eq_ignore_ascii_case("relative"),
             }
         });
 
@@ -214,10 +224,14 @@ impl Mapper{
 
         let mut mouse_hold_slots=[false;16];
         for x in &cfg.mouse_holds{mouse_hold_slots[x.slot as usize]=true;}
+        let touch_cfg=(cfg.touch.pressure,cfg.touch.major,cfg.touch.minor);
+        let touch_reconnect=cfg.performance.fifo_reconnect_ms;
+        let touch_retries=cfg.performance.fifo_write_retries;
+        let touch_wait=cfg.performance.fifo_write_wait_ms;
 
         Ok(Self{
-            touch:Pipe::new(cfg.touch_fifo()),
-            pointer:Pipe::new(cfg.pointer_fifo()),
+            touch:Pipe::new(cfg.touch_fifo(),touch_reconnect,touch_retries,touch_wait),
+            pointer:Pipe::new(cfg.pointer_fifo(),touch_reconnect,touch_retries,touch_wait),
             cfg:Arc::new(cfg),
             slots:[C{down:false};16],
             next:1,
@@ -226,7 +240,7 @@ impl Mapper{
             keys:[false;MAX_INPUT_CODE],
             key_actions:key_actions.into_boxed_slice(),
             mouse_actions:mouse_actions.into_boxed_slice(),
-            joystick,aim_cfg,mouse_hold_slots,
+            joystick,aim_cfg,touch_cfg,mouse_hold_slots,
         })
     }
 
@@ -267,9 +281,9 @@ impl Mapper{
             (ABS,ID,id),
             (ABS,X,x),
             (ABS,Y,y),
-            (ABS,MAJOR,8),
-            (ABS,MINOR,8),
-            (ABS,PRESS,80),
+            (ABS,MAJOR,self.touch_cfg.1),
+            (ABS,MINOR,self.touch_cfg.2),
+            (ABS,PRESS,self.touch_cfg.0),
         ];
         if first{e.push((KEY,BTN_TOUCH,1))}
         e.push((SYN,0,0));
@@ -321,7 +335,7 @@ impl Mapper{
         if self.pressed(j.up){dy-=1.}
         if self.pressed(j.down){dy+=1.}
         let l=(dx*dx+dy*dy).sqrt();
-        if l>1.{dx/=l;dy/=l}
+        if j.normalize_diagonal&&l>1.{dx/=l;dy/=l}
         let x=j.center_x+dx*j.radius;
         let y=j.center_y+dy*j.radius;
         if l==0.{self.up(j.slot)}
@@ -363,8 +377,8 @@ impl Mapper{
 
             // Preserve sub-pixel mouse movement for low sensitivities instead
             // of rounding every evdev packet independently to zero.
-            self.rel_acc_x+=(dx as f32)*a.sensitivity;
-            self.rel_acc_y+=(dy as f32)*a.sensitivity*(if a.invert_y{-1.}else{1.});
+            self.rel_acc_x+=(dx as f32)*a.sensitivity*a.scale_x*(if a.invert_x{-1.}else{1.});
+            self.rel_acc_y+=(dy as f32)*a.sensitivity*a.scale_y*(if a.invert_y{-1.}else{1.});
 
             let sx=self.rel_acc_x.trunc() as i32;
             let sy=self.rel_acc_y.trunc() as i32;
@@ -382,9 +396,10 @@ impl Mapper{
             return;
         }
 
-        self.mx+=(dx as f32*a.sensitivity)/self.cfg.display.width as f32;
+        let sx=if a.invert_x{-1.}else{1.};
+        self.mx+=(dx as f32*a.sensitivity*a.scale_x*sx)/self.cfg.display.width as f32;
         let sy=if a.invert_y{-1.}else{1.};
-        self.my+=(dy as f32*a.sensitivity*sy)/self.cfg.display.height as f32;
+        self.my+=(dy as f32*a.sensitivity*a.scale_y*sy)/self.cfg.display.height as f32;
 
         // Keep the virtual touch near the center. This remains bounded by the
         // Android touch protocol; relative mode above is the true unbounded path.
