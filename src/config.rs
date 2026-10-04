@@ -23,7 +23,7 @@ pub struct Config{
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseHold{pub button:String,pub x:f32,pub y:f32,#[serde(default="s5")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="dt")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String}
 fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn f8()->String{"F8".into()} fn touch_mode()->String{"touch".into()}
-impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,mouse_lock:true,mouse_toggle_key:"F8".into()}}}
+impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,mouse_lock:false,mouse_toggle_key:"F8".into()}}}
 
 impl Config{
  pub fn conflicts(&self)->Vec<String>{
@@ -133,7 +133,7 @@ mod tests{
  #[test]
  fn default_performance_is_shooter_safe(){
   let p=Performance::default();
-  assert!(p.grab&&p.realtime&&p.mouse_lock);
+  assert!(p.grab&&p.realtime&&!p.mouse_lock);
   assert_eq!(p.mouse_toggle_key,"F8");
  }
 
