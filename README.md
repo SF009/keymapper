@@ -8,7 +8,7 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - evdev mouse capture
 - WASD normalized analog joystick
 - mouse-button held aim
-- configurable mouse sensitivity, X/Y inversion and independent X/Y aim scaling
+- configurable mouse sensitivity, X/Y inversion, independent X/Y aim scaling and absolute-mode edge margin
 - configurable joystick diagonal normalization
 - touch and relative/unbounded FPS aim backends
 - runtime mouse lock/unlock with configurable toggle key (F8 by default)
@@ -111,7 +111,7 @@ The GUI supports:
 - keyboard TAP/HOLD mappings
 - mouse TAP/HOLD mappings
 - optional WASD joystick
-- optional mouse aim mapping with sensitivity, X/Y scaling and X/Y inversion
+- optional mouse aim mapping with sensitivity, X/Y scaling, X/Y inversion and absolute-mode edge margin
 - device selection from detected evdev devices
 - 16:9 touch-map preview with click-to-select and drag-to-position
 - normalized X/Y and touch-slot editing
@@ -172,3 +172,5 @@ Locking the mouse intentionally grabs the selected physical evdev mouse so GNOME
 ## Advanced tuning
 
 The GUI exposes low-latency tuning under **Performance** and **Touch input tuning**. `realtime_priority` is best-effort because an unprivileged user service may not have permission to enter `SCHED_FIFO`; the mapper continues normally when the request is denied. FIFO retries/wait/reconnect values are bounded during validation to prevent accidental long stalls in the input path. Touch pressure/major/minor values are advanced compatibility controls for Android input-device interpretation.
+
+The absolute aim `edge_margin` controls how close a touch-mode aim point may approach the screen edge before the mapper returns it to the configured aim center. The default is `0.12`; use `0` to effectively disable the early margin while retaining the final normalized bounds.
