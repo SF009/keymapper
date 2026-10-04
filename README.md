@@ -11,6 +11,7 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - configurable mouse sensitivity, X/Y inversion, independent X/Y aim scaling and absolute-mode edge margin
 - configurable joystick diagonal normalization
 - touch and relative/unbounded FPS aim backends
+- helper-inspired Aim ownership: aim can acquire/release mouse capture automatically
 - runtime mouse lock/unlock with configurable toggle key (F8 by default)
 - conflict detection for physical key/button reuse and reserved lock key
 - tap and hold touch bindings
@@ -19,7 +20,7 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - normalized coordinates, independent of desktop resolution
 - direct Waydroid touch FIFO output
 - reconnect after Waydroid restarts and stable hotplug device paths when available
-- CLI commands: run, check, devices
+- CLI commands: run, check, devices, doctor
 - user systemd unit and udev permissions
 
 The hot path is event-driven: there is no 60 Hz polling loop. A kernel input event is consumed, mapped, batched and written immediately.
@@ -69,7 +70,8 @@ You can override it with WAYDROID_TOUCH_FIFO.
 The included example uses:
 
     W A S D       -> joystick slot 0
-    Right mouse  -> aim slot 1
+    Right mouse  -> aim slot 1 (auto-lock while held)
+    Left mouse   -> fire hold slot
     Space        -> tap slot 2
     R            -> reload tap slot 3
     F            -> hold slot 4
@@ -139,7 +141,7 @@ Do not run the daemon as root when the udev input permissions are configured.
 
 ## Aim behavior
 
-Two aim paths are available. `mode="touch"` keeps a virtual multitouch finger and is the compatibility path for touch-first shooters such as Free Fire. `mode="relative"` emits relative `REL_X/REL_Y` motion through Waydroid's pointer input FIFO, avoiding the old edge-recenter jump and keeping the host pointer captured while aiming.
+Two aim paths are available. `mode="touch"` keeps a virtual multitouch finger and is the compatibility path for touch-first shooters such as Free Fire; when it reaches the configured edge margin it performs an explicit UP -> recenter -> DOWN transaction instead of teleporting an existing finger. `mode="relative"` emits relative `REL_X/REL_Y` through Waydroid's pointer FIFO for unbounded FPS camera motion.
 
 Waydroid's modern hardware composer also has an Android pointer-capture path that uses Wayland pointer constraints and a relative-pointer interface. The direct FIFO relative backend here is intentionally separate from that Android API, so support should be tested against the exact Waydroid image/vendor in use.
 
@@ -152,12 +154,22 @@ Waydroid's modern hardware composer also has an Android pointer-capture path tha
 - normalized coordinates
 - no screenshots or OCR
 - EVIOCGRAB mouse/keyboard capture when enabled
-- runtime mouse lock toggle: F8 by default; **mouse lock is off by default** so starting the daemon never captures the desktop cursor unexpectedly; locking releases active aim/fire touch slots on unlock
+- runtime mouse lock toggle: F8 by default; **mouse lock is off by default** so starting the daemon never captures the desktop cursor unexpectedly
+- Aim ownership is explicit: a manual F8 lock survives Aim release, while an Aim-owned lock is released when the Aim button is released
+- unlocked mouse events are drained from the mapper's private evdev queue so the thread cannot busy-spin on permanent POLLIN while GNOME continues receiving its own event stream
 - relative mouse motion is batched per evdev read before being written to Android
 - configurable realtime scheduler priority (best-effort), FIFO retries/wait/reconnect backoff and Android touch pressure/major/minor tuning
 - conflict validation prevents ambiguous physical-input ownership
 
 The project is intentionally small enough to run comfortably on low-RAM systems.
+
+## Diagnostics
+
+Before gameplay, run:
+
+    waydroid-keymapper doctor
+
+This checks the configured evdev devices, Waydroid input FIFOs, configuration validity and the Waydroid command. It is the fastest way to distinguish a mapper problem from a Waydroid-image/vendor input problem.
 
 ## License
 
@@ -166,7 +178,7 @@ GPL-3.0-or-later
 
 ### Mouse lock safety
 
-Locking the mouse intentionally grabs the selected physical evdev mouse so GNOME cannot consume the same movement stream. The GUI therefore cannot receive mouse clicks while the lock is active. Use the configured toggle key (default `F8`) to unlock; `Ctrl+Alt+F12` is a built-in emergency unlock and remains available even when the keyboard is grabbed.
+Locking the mouse intentionally grabs the selected physical evdev mouse so GNOME cannot consume the same movement stream. The recommended shooter path is `auto_lock_on_aim=true`: holding the configured Aim button acquires the grab, and releasing Aim gives ownership back. A manual F8 lock is still available; `Ctrl+Alt+F12` is a built-in emergency unlock and remains available even when the keyboard is grabbed.
 
 
 ## Advanced tuning

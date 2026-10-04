@@ -20,11 +20,11 @@ pub extern "C" fn signal_handler(_: libc::c_int) {
     SHUTDOWN.store(true, Ordering::Release);
 }
 
-pub fn install_signal_handlers() {
-    unsafe {
-        libc::signal(libc::SIGTERM, signal_handler as usize);
-        libc::signal(libc::SIGINT, signal_handler as usize);
-        libc::signal(libc::SIGHUP, signal_handler as usize);
+pub fn install_signal_handlers(){
+    unsafe{
+        libc::signal(libc::SIGTERM,signal_handler as *const () as usize);
+        libc::signal(libc::SIGINT,signal_handler as *const () as usize);
+        libc::signal(libc::SIGHUP,signal_handler as *const () as usize);
     }
 }
 
@@ -60,31 +60,20 @@ pub fn request(command: &str) -> Result<String, Box<dyn Error>> {
     Ok(out.trim().to_string())
 }
 
-fn handle(mut stream: UnixStream, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeControl>) {
-    let mut buf = String::new();
-    if stream.read_to_string(&mut buf).is_err() {
-        return;
-    }
-    let command = buf
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    let reply = match command.as_str() {
-        "status" => {
-            let (locked, grab) = mapper
-                .lock()
-                .map(|m| (m.is_mouse_locked(), m.config().performance.grab))
-                .unwrap_or((false, false));
-            let requested = control.mouse_locked.load(Ordering::Acquire);
-            format!(
-                "OK running=1 locked={} requested={} grab={} socket={}",
-                if locked { 1 } else { 0 },
-                if requested { 1 } else { 0 },
-                if grab { 1 } else { 0 },
-                socket_path().display()
-            )
+fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>){
+    let mut buf=String::new();
+    if stream.read_to_string(&mut buf).is_err(){return}
+    let command=buf.lines().next().unwrap_or_default().trim().to_ascii_lowercase();
+    let reply=match command.as_str(){
+        "status"=>{
+            let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
+            let requested=control.mouse_locked.load(Ordering::Acquire);
+            format!("OK running=1 locked={} requested={} owner={} grab={} socket={}",
+                if locked{1}else{0},
+                if requested{1}else{0},
+                control.owner_name(),
+                if grab{1}else{0},
+                socket_path().display())
         }
         "lock" => {
             let can_grab = mapper
@@ -97,8 +86,10 @@ fn handle(mut stream: UnixStream, mapper: &Arc<Mutex<Mapper>>, control: &Arc<Run
                 "ERR cannot-lock: exclusive input grab is disabled".to_string()
             }
         }
-        "unlock" => {
-            control.force_unlock();
+        "unlock"=>{
+            if control.set_locked(false,true){
+                control.notify_mouse();
+            }
             "OK requested=unlock".to_string()
         }
         "toggle" => {

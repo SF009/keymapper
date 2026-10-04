@@ -78,42 +78,40 @@ impl Pipe {
         self.next_connect = now;
         Ok(())
     }
+    fn send(&mut self,es:&[(u16,u16,i32)]){
+        if es.is_empty(){return}
+        self.send_with_policy(es,self.write_retries);
+    }
 
-    fn send(&mut self, es: &[(u16, u16, i32)]) {
-        if es.is_empty() {
-            return;
-        }
-        if self.f.is_none() && self.connect().is_err() {
-            return;
-        }
-        let Some(f) = self.f.as_mut() else { return };
+    /// Critical touch transitions (DOWN/UP) deserve a stronger bounded retry
+    /// budget than high-rate relative motion. This avoids stuck Fire/Aim contacts
+    /// when Waydroid's FIFO is briefly saturated while keeping the hot path bounded.
+    fn send_critical(&mut self,es:&[(u16,u16,i32)]){
+        if es.is_empty(){return}
+        self.send_with_policy(es,self.write_retries.max(8));
+    }
 
-        let size = std::mem::size_of::<E>();
-        let need = es.len().saturating_mul(size);
-        let mut buf = [0u8; 1024];
+    fn send_with_policy(&mut self,es:&[(u16,u16,i32)],retries:u8){
+        if self.f.is_none()&&self.connect().is_err(){return}
+        let Some(f)=self.f.as_mut()else{return};
 
-        if need > buf.len() {
-            let mut v = Vec::with_capacity(need);
-            for &(t, c, value) in es {
-                let e = E {
-                    i64a: 0,
-                    i64b: 0,
-                    t,
-                    c,
-                    v: value,
-                };
-                let b = unsafe { std::slice::from_raw_parts((&e as *const E) as *const u8, size) };
+        // Normal mapper batches are far below Linux PIPE_BUF. A single write
+        // keeps one multitouch transaction atomic and avoids write_all() on a
+        // non-blocking FIFO, which can turn EAGAIN/partial writes into dropped
+        // touch state.
+        let size=std::mem::size_of::<E>();
+        let need=es.len().saturating_mul(size);
+        let mut buf=[0u8;1024];
+
+        if need>buf.len(){
+            // This path is only for unusually large batches.
+            let mut v=Vec::with_capacity(need);
+            for &(t,c,value)in es{
+                let e=E{i64a:0,i64b:0,t,c,v:value};
+                let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            match pipe_write_bounded(f.as_raw_fd(), &v, self.write_retries, self.write_wait_ms) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(_) => {
-                    self.f = None;
-                    self.next_connect =
-                        std::time::Instant::now() + std::time::Duration::from_millis(self.reconnect_ms);
-                }
-            }
+            match pipe_write_bounded(f.as_raw_fd(),&v,retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
             return;
         }
 
@@ -131,20 +129,7 @@ impl Pipe {
             used += size;
         }
 
-        match pipe_write_bounded(
-            f.as_raw_fd(),
-            &buf[..used],
-            self.write_retries,
-            self.write_wait_ms,
-        ) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-            Err(_) => {
-                self.f = None;
-                self.next_connect =
-                    std::time::Instant::now() + std::time::Duration::from_millis(self.reconnect_ms);
-            }
-        }
+        match pipe_write_bounded(f.as_raw_fd(),&buf[..used],retries,self.write_wait_ms){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(self.reconnect_ms);},}
     }
 }
 
@@ -206,20 +191,18 @@ struct JoyRuntime {
     slot: u8,
 }
 
-#[derive(Clone, Copy)]
-struct AimRuntime {
-    button: u16,
-    continuous: bool,
-    center_x: f32,
-    center_y: f32,
-    sensitivity: f32,
-    slot: u8,
-    invert_x: bool,
-    invert_y: bool,
-    scale_x: f32,
-    scale_y: f32,
-    edge_margin: f32,
-    relative: bool,
+#[derive(Clone,Copy)]
+struct AimRuntime{
+    center_x:f32,
+    center_y:f32,
+    sensitivity:f32,
+    slot:u8,
+    invert_x:bool,
+    invert_y:bool,
+    scale_x:f32,
+    scale_y:f32,
+    edge_margin:f32,
+    relative:bool,
 }
 
 pub struct Mapper {
@@ -271,29 +254,13 @@ impl Mapper {
             }
         });
 
-        let aim_cfg = cfg.aim.as_ref().map(|a| {
-            let continuous = crate::config::is_continuous_aim(&a.button);
-            let button = if continuous {
-                0
-            } else {
-                button_code(&a.button).unwrap_or(0)
-            };
-            if button != 0 {
-                mouse_actions[button as usize] = Some(MouseAction::Aim);
-            }
-            AimRuntime {
-                button,
-                continuous,
-                center_x: a.center_x,
-                center_y: a.center_y,
-                sensitivity: a.sensitivity,
-                slot: a.slot,
-                invert_x: a.invert_x,
-                invert_y: a.invert_y,
-                scale_x: a.scale_x,
-                scale_y: a.scale_y,
-                edge_margin: a.edge_margin,
-                relative: a.mode.eq_ignore_ascii_case("relative"),
+        let aim_cfg=cfg.aim.as_ref().map(|a|{
+            let button=button_code(&a.button).unwrap();
+            mouse_actions[button as usize]=Some(MouseAction::Aim);
+            AimRuntime{
+                center_x:a.center_x,center_y:a.center_y,
+                sensitivity:a.sensitivity,slot:a.slot,invert_x:a.invert_x,invert_y:a.invert_y,
+                scale_x:a.scale_x,scale_y:a.scale_y,edge_margin:a.edge_margin,relative:a.mode.eq_ignore_ascii_case("relative"),
             }
         });
 
@@ -433,11 +400,9 @@ impl Mapper {
             (ABS, MINOR, self.touch_cfg.2),
             (ABS, PRESS, self.touch_cfg.0),
         ];
-        if first {
-            e.push((KEY, BTN_TOUCH, 1));
-        }
-        e.push((SYN, 0, 0));
-        self.out_touch(&e);
+        if first{e.push((KEY,BTN_TOUCH,1))}
+        e.push((SYN,0,0));
+        self.touch.send_critical(&e);
     }
 
     fn mv(&mut self, s: u8, x: f32, y: f32) {
@@ -459,19 +424,15 @@ impl Mapper {
         self.slots.iter().any(|c| c.down)
     }
 
-    fn up(&mut self, s: u8) {
-        let i = s as usize;
-        if i >= 16 || !self.slots[i].down {
-            return;
-        }
-        self.slots[i] = C { down: false };
-        let last = !self.any_down();
-        let mut e = vec![(ABS, SLOT, s as i32), (ABS, ID, -1), (ABS, PRESS, 0)];
-        if last {
-            e.push((KEY, BTN_TOUCH, 0));
-        }
-        e.push((SYN, 0, 0));
-        self.out_touch(&e);
+    fn up(&mut self,s:u8){
+        let i=s as usize;
+        if i>=16||!self.slots[i].down{return}
+        self.slots[i]=C{down:false};
+        let last=!self.any_down();
+        let mut e=vec![(ABS,SLOT,s as i32),(ABS,ID,-1),(ABS,PRESS,0)];
+        if last{e.push((KEY,BTN_TOUCH,0))}
+        e.push((SYN,0,0));
+        self.touch.send_critical(&e);
     }
 
     pub fn key(&mut self, c: u16, v: i32) {
@@ -623,14 +584,20 @@ impl Mapper {
         let sy = if a.invert_y { -1. } else { 1. };
         self.my += (dy as f32 * a.sensitivity * a.scale_y * sy) / self.cfg.display.height as f32;
 
-        let margin = a.edge_margin;
-        if self.mx < margin || self.mx > 1.0 - margin {
-            self.mx = a.center_x;
+        // Absolute aim uses the same recenter transaction as Waydroid Helper:
+        // end the old contact, move back to the calibrated center, then start a
+        // fresh contact. A plain MOVE-to-center creates an abrupt camera jump
+        // inside Android's gesture state and is especially visible in shooters.
+        let margin=a.edge_margin;
+        let hit_edge=self.mx<margin||self.mx>1.0-margin||self.my<margin||self.my>1.0-margin;
+        if hit_edge{
+            self.up(a.slot);
+            self.mx=a.center_x;
+            self.my=a.center_y;
+            self.down(a.slot,self.mx,self.my);
+            return;
         }
-        if self.my < margin || self.my > 1.0 - margin {
-            self.my = a.center_y;
-        }
-        self.mv(a.slot, self.mx, self.my);
+        self.mv(a.slot,self.mx,self.my);
     }
 
     fn release_mouse_inputs(&mut self) {
@@ -729,24 +696,29 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_reset_releases_joystick_and_holds() {
-        let mut c = cfg();
-        c.joystick = Some(crate::config::Joystick {
-            up: "W".into(),
-            down: "S".into(),
-            left: "A".into(),
-            right: "D".into(),
-            center_x: 0.15,
-            center_y: 0.76,
-            radius: 0.08,
-            normalize_diagonal: true,
-            slot: 0,
+    fn absolute_aim_recenters_with_a_fresh_touch_contact(){
+        let mut c=cfg();
+        c.aim=Some(Aim{
+            button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,
+            sensitivity:100.0,slot:1,invert_x:false,invert_y:false,
+            scale_x:20.0,scale_y:20.0,edge_margin:0.12,mode:"touch".into(),
         });
-        c.holds.push(crate::config::Hold {
-            key: "SHIFT".into(),
-            x: 0.8,
-            y: 0.8,
-            slot: 2,
+        let mut m=Mapper::new(c).unwrap();
+        m.set_mouse_lock(true);
+        m.button(KeyCode::BTN_RIGHT.0,1);
+        assert!(m.slots[1].down);
+        m.mouse(1000,0);
+        assert!((m.mx-0.5).abs()<f32::EPSILON);
+        assert!((m.my-0.5).abs()<f32::EPSILON);
+        assert!(m.slots[1].down);
+    }
+
+    #[test]
+    fn keyboard_reset_releases_joystick_and_holds(){
+        let mut c=cfg();
+        c.joystick=Some(crate::config::Joystick{
+            up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+            center_x:0.15,center_y:0.76,radius:0.08,normalize_diagonal:true,slot:0,
         });
         let mut m = Mapper::new(c).unwrap();
         m.key(key_code("SHIFT").unwrap(), 1);

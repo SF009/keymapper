@@ -1,17 +1,6 @@
-#[path = "../config.rs"]
-mod config;
-#[path = "../control.rs"]
-mod control;
-#[path = "../input.rs"]
-mod input;
-#[path = "../touch.rs"]
-mod touch;
+use waydroid_keymapper::{config,input,control};
 
-use config::{
-    Aim, Config, Devices, Display, Hold, Joystick, MouseHold, MouseTap, Performance, Tap,
-    TouchSettings,
-};
-use gtk4::gdk::Display as GdkDisplay;
+use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap,TouchSettings};
 use gtk4::prelude::*;
 use gtk4::{
     cairo, glib, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
@@ -191,63 +180,60 @@ struct State {
 
 #[derive(Clone)]
 struct Ui {
-    state: Rc<RefCell<State>>,
-    profile_list: ListBox,
-    bindings_box: GtkBox,
-    canvas: DrawingArea,
-    status: Label,
-    profile_name: Entry,
-    width: SpinButton,
-    height: SpinButton,
-    keyboard: ComboBoxText,
-    mouse: ComboBoxText,
-    aim_enabled: CheckButton,
-    aim_button: Entry,
-    aim_mode: ComboBoxText,
-    aim_x: SpinButton,
-    aim_y: SpinButton,
-    aim_sensitivity: SpinButton,
-    aim_slot: SpinButton,
-    aim_invert_x: CheckButton,
-    aim_invert_y: CheckButton,
-    aim_scale_x: SpinButton,
-    aim_scale_y: SpinButton,
-    aim_edge_margin: SpinButton,
-    joy_enabled: CheckButton,
-    joy_up: Entry,
-    joy_down: Entry,
-    joy_left: Entry,
-    joy_right: Entry,
-    joy_x: SpinButton,
-    joy_y: SpinButton,
-    joy_radius: SpinButton,
-    joy_slot: SpinButton,
-    joy_normalize: CheckButton,
-    grab: CheckButton,
-    realtime: CheckButton,
-    realtime_priority: SpinButton,
-    fifo_write_retries: SpinButton,
-    fifo_write_wait: SpinButton,
-    fifo_reconnect: SpinButton,
-    touch_pressure: SpinButton,
-    touch_major: SpinButton,
-    touch_minor: SpinButton,
-    mouse_lock: CheckButton,
-    mouse_toggle: Entry,
-    runtime_status: Label,
-    lock_status: Label,
-    waydroid_status: Label,
-    input_access: Label,
-    selected_editor_box: GtkBox,
+    state:Rc<RefCell<State>>,
+    profile_list:ListBox,
+    bindings_box:GtkBox,
+    canvas:DrawingArea,
+    status:Label,
+    profile_name:Entry,
+    width:SpinButton,
+    height:SpinButton,
+    keyboard:ComboBoxText,
+    mouse:ComboBoxText,
+    aim_enabled:CheckButton,
+    aim_button:Entry,
+    aim_mode:ComboBoxText,
+    aim_x:SpinButton,
+    aim_y:SpinButton,
+    aim_sensitivity:SpinButton,
+    aim_slot:SpinButton,
+    aim_invert_x:CheckButton,
+    aim_invert_y:CheckButton,
+    aim_scale_x:SpinButton,
+    aim_scale_y:SpinButton,
+    aim_edge_margin:SpinButton,
+    joy_enabled:CheckButton,
+    joy_up:Entry,
+    joy_down:Entry,
+    joy_left:Entry,
+    joy_right:Entry,
+    joy_x:SpinButton,
+    joy_y:SpinButton,
+    joy_radius:SpinButton,
+    joy_slot:SpinButton,
+    joy_normalize:CheckButton,
+    grab:CheckButton,
+    realtime:CheckButton,
+    realtime_priority:SpinButton,
+    fifo_write_retries:SpinButton,
+    fifo_write_wait:SpinButton,
+    fifo_reconnect:SpinButton,
+    touch_pressure:SpinButton,
+    touch_major:SpinButton,
+    touch_minor:SpinButton,
+    mouse_lock:CheckButton,
+    auto_lock_on_aim:CheckButton,
+    mouse_toggle:Entry,
+    runtime_status:Label,
+    lock_status:Label,
+    input_access:Label,
 }
 
-fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+fn home_dir()->PathBuf{
+    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("."))
 }
 
-fn profiles_dir() -> PathBuf {
+fn profiles_dir()->PathBuf{
     home_dir().join(".config/waydroid-keymapper/profiles")
 }
 
@@ -680,19 +666,38 @@ fn apply_preset(ui: &Ui, preset: ShooterPreset) {
     sync_form(ui);
     rebuild_bindings(ui);
     ui.canvas.queue_draw();
-    set_status(
-        ui,
-        match preset {
-            ShooterPreset::FreeFire => "🔥 Free Fire preset loaded — reposition & click Save",
-            ShooterPreset::Pubg => "🎯 PUBG Mobile preset loaded — reposition & click Save",
-            ShooterPreset::Fps => "🎮 FPS Shooter preset loaded — reposition & click Save",
-            ShooterPreset::Minimal => "⚡ Minimal preset loaded — reposition & click Save",
-        },
-    );
+    set_status(ui,match preset{
+        ShooterPreset::FreeFire=>"Free Fire preset loaded — drag controls and Save",
+        ShooterPreset::Fps=>"FPS/BR Shooter preset loaded — drag controls and Save",
+        ShooterPreset::Minimal=>"Minimal Shooter preset loaded — drag controls and Save",
+    });
 }
 
-fn ensure_profiles() -> Result<PathBuf, Box<dyn Error>> {
-    let dir = profiles_dir();
+fn default_config()->Config{
+    Config{
+        display:Display{width:1920,height:1080},
+        devices:Devices{keyboard:None,mouse:None},
+        joystick:Some(Joystick{
+            up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+            center_x:0.15,center_y:0.76,radius:0.085,normalize_diagonal:true,slot:0,
+        }),
+        aim:Some(Aim{
+            button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
+            slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,edge_margin:0.12,mode:"relative".into(),
+        }),
+        taps:vec![
+            Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
+            Tap{key:"R".into(),x:0.93,y:0.18,slot:3},
+        ],
+        holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
+        mouse_taps:Vec::new(),
+        mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
+        performance:Performance{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,auto_lock_on_aim:true,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25},touch:TouchSettings::default(),
+    }
+}
+
+fn ensure_profiles()->Result<PathBuf,Box<dyn Error>>{
+    let dir=profiles_dir();
     fs::create_dir_all(&dir)?;
     let default_path = dir.join("default.toml");
     if !default_path.exists() {
@@ -920,219 +925,60 @@ fn nearest_binding(cfg: &Config, x: f32, y: f32) -> Option<BindingRef> {
     best
 }
 
-fn next_available_slot(cfg: &Config) -> u8 {
-    let mut used = [false; 16];
-    if let Some(j) = &cfg.joystick {
-        if (j.slot as usize) < 16 {
-            used[j.slot as usize] = true;
+fn draw_canvas(ui_state:&Rc<RefCell<State>>,_area:&DrawingArea,cr:&cairo::Context,w:i32,h:i32){
+    let st=ui_state.borrow();
+    let cfg=&st.cfg;
+    let pad=16.;
+    let cw=(w as f64-2.*pad).max(10.);
+    let ch=(h as f64-2.*pad).max(10.);
+    let scale=(cw/cfg.display.width.max(1) as f64).min(ch/cfg.display.height.max(1) as f64);
+    let vw=cfg.display.width as f64*scale;
+    let vh=cfg.display.height as f64*scale;
+    let ox=(w as f64-vw)/2.;
+    let oy=(h as f64-vh)/2.;
+
+    cr.set_source_rgb(0.055,0.065,0.08);
+    cr.rectangle(0.,0.,w as f64,h as f64); let _=cr.fill();
+    cr.set_source_rgb(0.10,0.115,0.14);
+    cr.rectangle(ox,oy,vw,vh); let _=cr.fill();
+
+    cr.set_source_rgb(0.15,0.17,0.20);
+    for n in 1..10{
+        let gx=ox+vw*(n as f64/10.);
+        let gy=oy+vh*(n as f64/10.);
+        cr.move_to(gx,oy);cr.line_to(gx,oy+vh);
+        cr.move_to(ox,gy);cr.line_to(ox+vw,gy);
+    }
+    let _=cr.stroke();
+
+    let p=|x:f32,y:f32|(ox+vw*x as f64,oy+vh*y as f64);
+
+    if let Some(j)=&cfg.joystick{
+        let (x,y)=p(j.center_x,j.center_y);
+        let r=vw.min(vh)*j.radius as f64;
+        cr.set_source_rgba(0.20,0.95,0.45,0.16);
+        cr.arc(x,y,r,0.,std::f64::consts::TAU);let _=cr.fill();
+        cr.set_source_rgb(0.30,1.,0.50);
+        cr.arc(x,y,r,0.,std::f64::consts::TAU);let _=cr.stroke();
+        cr.arc(x,y,5.,0.,std::f64::consts::TAU);let _=cr.fill();
+        cr.move_to(x+8.,y-8.);let _=cr.show_text("WASD");
+    }
+
+    let draw_marker=|sel:BindingRef,x:f32,y:f32,text:&str|{
+        let (px,py)=p(x,y);
+        let (r,g,b)=marker_color(sel);
+        let selected=st.selected==Some(sel);
+        let radius=if selected{13.}else{10.};
+        cr.set_source_rgba(r,g,b,0.20);
+        cr.arc(px,py,radius+6.,0.,std::f64::consts::TAU);let _=cr.fill();
+        cr.set_source_rgb(r,g,b);
+        cr.arc(px,py,radius,0.,std::f64::consts::TAU);let _=cr.fill();
+        if selected{
+            cr.set_source_rgb(1.,1.,1.);
+            cr.arc(px,py,radius+4.,0.,std::f64::consts::TAU);let _=cr.stroke();
         }
-    }
-    if let Some(a) = &cfg.aim {
-        if (a.slot as usize) < 16 {
-            used[a.slot as usize] = true;
-        }
-    }
-    for x in &cfg.taps {
-        if (x.slot as usize) < 16 {
-            used[x.slot as usize] = true;
-        }
-    }
-    for x in &cfg.holds {
-        if (x.slot as usize) < 16 {
-            used[x.slot as usize] = true;
-        }
-    }
-    for x in &cfg.mouse_taps {
-        if (x.slot as usize) < 16 {
-            used[x.slot as usize] = true;
-        }
-    }
-    for x in &cfg.mouse_holds {
-        if (x.slot as usize) < 16 {
-            used[x.slot as usize] = true;
-        }
-    }
-
-    for (i, &u) in used.iter().enumerate() {
-        if !u {
-            return i as u8;
-        }
-    }
-    15
-}
-
-fn draw_canvas(ui_state: &Rc<RefCell<State>>, _area: &DrawingArea, cr: &cairo::Context, w: i32, h: i32) {
-    let st = ui_state.borrow();
-    let cfg = &st.cfg;
-    let pad = 16.;
-    let cw = (w as f64 - 2. * pad).max(10.);
-    let ch = (h as f64 - 2. * pad).max(10.);
-    let scale = (cw / cfg.display.width.max(1) as f64).min(ch / cfg.display.height.max(1) as f64);
-    let vw = cfg.display.width as f64 * scale;
-    let vh = cfg.display.height as f64 * scale;
-    let ox = (w as f64 - vw) / 2.;
-    let oy = (h as f64 - vh) / 2.;
-
-    // Canvas Background
-    cr.set_source_rgb(0.07, 0.08, 0.11);
-    cr.rectangle(0., 0., w as f64, h as f64);
-    let _ = cr.fill();
-
-    // Phone / Display Screen Simulation
-    cr.set_source_rgb(0.11, 0.13, 0.18);
-    cr.rectangle(ox, oy, vw, vh);
-    let _ = cr.fill();
-
-    // Subtle Grid Lines
-    cr.set_source_rgba(0.20, 0.25, 0.35, 0.35);
-    cr.set_line_width(1.0);
-    for n in 1..10 {
-        let gx = ox + vw * (n as f64 / 10.);
-        let gy = oy + vh * (n as f64 / 10.);
-        cr.move_to(gx, oy);
-        cr.line_to(gx, oy + vh);
-        cr.move_to(ox, gy);
-        cr.line_to(ox + vw, gy);
-    }
-    let _ = cr.stroke();
-
-    // Screen Center Guide Cross
-    cr.set_source_rgba(0.35, 0.45, 0.65, 0.4);
-    let cx = ox + vw * 0.5;
-    let cy = oy + vh * 0.5;
-    cr.move_to(cx - 20., cy);
-    cr.line_to(cx + 20., cy);
-    cr.move_to(cx, cy - 20.);
-    cr.line_to(cx, cy + 20.);
-    let _ = cr.stroke();
-
-    // Screen Outer Border
-    cr.set_source_rgb(0.24, 0.30, 0.42);
-    cr.set_line_width(2.0);
-    cr.rectangle(ox, oy, vw, vh);
-    let _ = cr.stroke();
-
-    let p = |x: f32, y: f32| (ox + vw * x as f64, oy + vh * y as f64);
-
-    // Render Joystick
-    if let Some(j) = &cfg.joystick {
-        let (jx, jy) = p(j.center_x, j.center_y);
-        let r = vw.min(vh) * j.radius as f64;
-        let selected = st.selected == Some(BindingRef::Joystick);
-
-        // Outer glow & fill
-        cr.set_source_rgba(0.0, 0.96, 0.60, if selected { 0.28 } else { 0.14 });
-        cr.arc(jx, jy, r, 0., std::f64::consts::TAU);
-        let _ = cr.fill();
-
-        // Border
-        cr.set_source_rgb(0.0, 0.96, 0.60);
-        cr.set_line_width(if selected { 3.0 } else { 1.8 });
-        cr.arc(jx, jy, r, 0., std::f64::consts::TAU);
-        let _ = cr.stroke();
-
-        // Center Deadzone Circle
-        cr.arc(jx, jy, 6., 0., std::f64::consts::TAU);
-        let _ = cr.fill();
-
-        // Direction labels
-        cr.set_source_rgb(1.0, 1.0, 1.0);
-        cr.set_font_size(11.0);
-        cr.move_to(jx - 4., jy - r + 14.);
-        cr.show_text(&j.up);
-        cr.move_to(jx - 4., jy + r - 5.);
-        cr.show_text(&j.down);
-        cr.move_to(jx - r + 5., jy + 4.);
-        cr.show_text(&j.left);
-        cr.move_to(jx + r - 14., jy + 4.);
-        cr.show_text(&j.right);
-
-        // Header label
-        cr.set_source_rgb(0.0, 0.96, 0.60);
-        cr.set_font_size(12.0);
-        cr.move_to(jx - 24., jy - r - 6.);
-        cr.show_text("🕹 WASD");
-    }
-
-    // Render Aim Crosshair
-    if let Some(a) = &cfg.aim {
-        let (ax, ay) = p(a.center_x, a.center_y);
-        let selected = st.selected == Some(BindingRef::Aim);
-        let (r, g, b) = marker_color(BindingRef::Aim);
-
-        cr.set_source_rgba(r, g, b, if selected { 0.35 } else { 0.20 });
-        cr.arc(ax, ay, 20., 0., std::f64::consts::TAU);
-        let _ = cr.fill();
-
-        cr.set_source_rgb(r, g, b);
-        cr.set_line_width(if selected { 2.5 } else { 1.5 });
-        cr.arc(ax, ay, 20., 0., std::f64::consts::TAU);
-        let _ = cr.stroke();
-
-        // Crosshair reticle lines
-        cr.move_to(ax - 28., ay);
-        cr.line_to(ax - 10., ay);
-        cr.move_to(ax + 10., ay);
-        cr.line_to(ax + 28., ay);
-        cr.move_to(ax, ay - 28.);
-        cr.line_to(ax, ay - 10.);
-        cr.move_to(ax, ay + 10.);
-        cr.line_to(ax, ay + 28.);
-        let _ = cr.stroke();
-
-        cr.set_source_rgb(1.0, 1.0, 1.0);
-        cr.set_font_size(11.0);
-        cr.move_to(ax + 24., ay + 4.);
-        cr.show_text(&format!(
-            "🎯 AIM [{}] ({:.1}x)",
-            if a.mode == "relative" { "FPS" } else { "Touch" },
-            a.sensitivity
-        ));
-    }
-
-    // Helper to draw button markers
-    let draw_marker = |sel: BindingRef, x: f32, y: f32, label: &str, tag: &str, slot: u8| {
-        let (px, py) = p(x, y);
-        let (r, g, b) = marker_color(sel);
-        let selected = st.selected == Some(sel);
-        let pill_w = 64.0;
-        let pill_h = 24.0;
-        let rx = px - pill_w / 2.;
-        let ry = py - pill_h / 2.;
-
-        // Halo when selected
-        if selected {
-            cr.set_source_rgba(1.0, 1.0, 1.0, 0.25);
-            cr.rectangle(rx - 4., ry - 4., pill_w + 8., pill_h + 8.);
-            let _ = cr.fill();
-            cr.set_source_rgb(1.0, 1.0, 1.0);
-            cr.set_line_width(2.0);
-            cr.rectangle(rx - 3., ry - 3., pill_w + 6., pill_h + 6.);
-            let _ = cr.stroke();
-        }
-
-        // Main pill body
-        cr.set_source_rgba(r, g, b, if selected { 0.90 } else { 0.75 });
-        cr.rectangle(rx, ry, pill_w, pill_h);
-        let _ = cr.fill();
-
-        // Border
-        cr.set_source_rgb(r, g, b);
-        cr.set_line_width(1.5);
-        cr.rectangle(rx, ry, pill_w, pill_h);
-        let _ = cr.stroke();
-
-        // Key Name
-        cr.set_source_rgb(0.05, 0.05, 0.08);
-        cr.set_font_size(11.0);
-        cr.move_to(rx + 6., ry + 16.);
-        cr.show_text(label);
-
-        // Tag & Slot below
-        cr.set_source_rgb(0.9, 0.95, 1.0);
-        cr.set_font_size(9.0);
-        cr.move_to(rx, ry + pill_h + 11.);
-        cr.show_text(&format!("{tag} [S{slot}]"));
+        cr.set_source_rgb(1.,1.,1.);
+        cr.move_to(px+radius+5.,py+4.);let _=cr.show_text(text);
     };
 
     for (i, x) in cfg.taps.iter().enumerate() {
@@ -1162,13 +1008,9 @@ fn draw_canvas(ui_state: &Rc<RefCell<State>>, _area: &DrawingArea, cr: &cairo::C
         );
     }
 
-    // Canvas footer instructions
-    cr.set_source_rgb(0.55, 0.62, 0.75);
-    cr.set_font_size(11.0);
-    cr.move_to(ox, oy + vh + 18.);
-    cr.show_text(
-        "💡 Click to select • Drag to move • Double-click to add • Arrow keys to nudge • F8 toggles Lock",
-    );
+    cr.set_source_rgb(0.60,0.63,0.68);
+    cr.move_to(ox,oy+vh+22.);
+    let _=cr.show_text("Click a marker to select • drag to reposition • Save to persist");
 }
 
 fn form_row(grid: &Grid, row: i32, label: &str, w: &impl gtk4::prelude::WidgetExt) {
@@ -1780,46 +1622,36 @@ fn sync_form(ui: &Ui) {
     ui.touch_major.set_value(st.cfg.touch.major as f64);
     ui.touch_minor.set_value(st.cfg.touch.minor as f64);
     ui.mouse_lock.set_active(st.cfg.performance.mouse_lock);
-    ui.mouse_toggle
-        .set_text(&st.cfg.performance.mouse_toggle_key);
-    fill_devices(&ui.keyboard, &st.cfg.devices.keyboard, false);
-    fill_devices(&ui.mouse, &st.cfg.devices.mouse, true);
+    ui.auto_lock_on_aim.set_active(st.cfg.performance.auto_lock_on_aim);
+    ui.mouse_toggle.set_text(&st.cfg.performance.mouse_toggle_key);
+    fill_devices(&ui.keyboard,&st.cfg.devices.keyboard,false);
+    fill_devices(&ui.mouse,&st.cfg.devices.mouse,true);
 }
 
-fn sync_state_from_form(ui: &Ui) {
-    let mut st = ui.state.borrow_mut();
-    let w = ui.width.value().round() as i32;
-    let h = ui.height.value().round() as i32;
-    st.cfg.display.width = w;
-    st.cfg.display.height = h;
-    st.cfg.devices.keyboard = ui.keyboard.active_id().map(|x| x.to_string());
-    st.cfg.devices.mouse = ui.mouse.active_id().map(|x| x.to_string());
-    st.cfg.performance.grab = ui.grab.is_active();
-    st.cfg.performance.realtime = ui.realtime.is_active();
-    st.cfg.performance.realtime_priority = ui.realtime_priority.value().round() as i32;
-    st.cfg.performance.fifo_write_retries = ui.fifo_write_retries.value().round() as u8;
-    st.cfg.performance.fifo_write_wait_ms = ui.fifo_write_wait.value().round() as u64;
-    st.cfg.performance.fifo_reconnect_ms = ui.fifo_reconnect.value().round() as u64;
-    st.cfg.performance.mouse_lock = ui.mouse_lock.is_active();
-    st.cfg.performance.mouse_toggle_key = ui.mouse_toggle.text().trim().to_string();
+fn sync_state_from_form(ui:&Ui){
+    let mut st=ui.state.borrow_mut();
+    let w=ui.width.value().round() as i32;let h=ui.height.value().round() as i32;
+    st.cfg.display.width=w;st.cfg.display.height=h;
+    st.cfg.devices.keyboard=ui.keyboard.active_id().map(|x|x.to_string());
+    st.cfg.devices.mouse=ui.mouse.active_id().map(|x|x.to_string());
+    st.cfg.performance.grab=ui.grab.is_active();
+    st.cfg.performance.realtime=ui.realtime.is_active();
+    st.cfg.performance.realtime_priority=ui.realtime_priority.value().round() as i32;
+    st.cfg.performance.fifo_write_retries=ui.fifo_write_retries.value().round() as u8;
+    st.cfg.performance.fifo_write_wait_ms=ui.fifo_write_wait.value().round() as u64;
+    st.cfg.performance.fifo_reconnect_ms=ui.fifo_reconnect.value().round() as u64;
+    st.cfg.performance.mouse_lock=ui.mouse_lock.is_active();
+    st.cfg.performance.auto_lock_on_aim=ui.auto_lock_on_aim.is_active();
+    st.cfg.performance.mouse_toggle_key=ui.mouse_toggle.text().trim().to_string();
 
-    if ui.aim_enabled.is_active() {
-        st.cfg.aim = Some(Aim {
-            button: ui.aim_button.text().trim().to_string(),
-            center_x: ui.aim_x.value() as f32,
-            center_y: ui.aim_y.value() as f32,
-            sensitivity: ui.aim_sensitivity.value() as f32,
-            slot: ui.aim_slot.value() as u8,
-            invert_x: ui.aim_invert_x.is_active(),
-            invert_y: ui.aim_invert_y.is_active(),
-            scale_x: ui.aim_scale_x.value() as f32,
-            scale_y: ui.aim_scale_y.value() as f32,
-            edge_margin: ui.aim_edge_margin.value() as f32,
-            mode: ui
-                .aim_mode
-                .active_id()
-                .map(|x| x.to_string())
-                .unwrap_or_else(|| "relative".into()),
+    if ui.aim_enabled.is_active(){
+        st.cfg.aim=Some(Aim{
+            button:ui.aim_button.text().trim().to_string(),
+            center_x:ui.aim_x.value() as f32,center_y:ui.aim_y.value() as f32,
+            sensitivity:ui.aim_sensitivity.value() as f32,slot:ui.aim_slot.value() as u8,
+            invert_x:ui.aim_invert_x.is_active(),invert_y:ui.aim_invert_y.is_active(),
+            scale_x:ui.aim_scale_x.value() as f32,scale_y:ui.aim_scale_y.value() as f32,edge_margin:ui.aim_edge_margin.value() as f32,
+            mode:ui.aim_mode.active_id().map(|x|x.to_string()).unwrap_or_else(||"touch".into()),
         });
     } else {
         st.cfg.aim = None;
@@ -2176,53 +2008,34 @@ where
     });
 }
 
-fn update_runtime_status(ui: &Ui) {
-    let svc = runtime_service_state();
-    ui.runtime_status.set_text(&format!("Daemon: {svc}"));
-    if svc == "Running" {
-        ui.runtime_status.set_css_classes(&["status-badge", "status-green"]);
-    } else if svc == "Stopped" {
-        ui.runtime_status.set_css_classes(&["status-badge", "status-amber"]);
-    } else {
-        ui.runtime_status.set_css_classes(&["status-badge", "status-red"]);
-    }
-
-    let wd = waydroid_state();
-    ui.waydroid_status.set_text(&format!("Waydroid: {wd}"));
-    if wd.contains("RUNNING") || wd == "Running" {
-        ui.waydroid_status.set_css_classes(&["status-badge", "status-green"]);
-    } else {
-        ui.waydroid_status.set_css_classes(&["status-badge", "status-amber"]);
-    }
-
-    match control::request("status") {
-        Ok(reply) => {
-            let locked = reply
-                .split_whitespace()
-                .find_map(|x| x.strip_prefix("locked="))
-                .unwrap_or("0");
-            let requested = reply
-                .split_whitespace()
-                .find_map(|x| x.strip_prefix("requested="))
-                .unwrap_or(locked);
-            let running = reply
-                .split_whitespace()
-                .find_map(|x| x.strip_prefix("running="))
-                .unwrap_or("1");
-            if running == "1" {
-                if requested == "1" && locked == "1" {
-                    ui.lock_status.set_text("🔒 Gaming Mode (Locked)");
-                    ui.lock_status.set_css_classes(&["status-badge", "status-green"]);
-                } else if requested == "1" || locked == "1" {
-                    ui.lock_status.set_text("🔄 Toggling Mouse…");
-                    ui.lock_status.set_css_classes(&["status-badge", "status-amber"]);
-                } else {
-                    ui.lock_status.set_text("🖱 Desktop Mode (Unlocked)");
-                    ui.lock_status.set_css_classes(&["status-badge", "status-amber"]);
-                }
-            } else {
-                ui.lock_status.set_text("Mouse: Offline");
-                ui.lock_status.set_css_classes(&["status-badge", "status-red"]);
+fn update_runtime_status(ui:&Ui){
+    let svc=runtime_service_state();
+    ui.runtime_status.set_text(&format!("Service: {svc}"));
+    let (kbd,mouse)={
+        let st=ui.state.borrow();
+        (st.cfg.devices.keyboard.clone(),st.cfg.devices.mouse.clone())
+    };
+    ui.input_access.set_text(&format!("Keyboard: {}\nMouse: {}",device_access(kbd),device_access(mouse)));
+    match control::request("status"){
+        Ok(reply)=>{
+            let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
+            let requested=reply.split_whitespace().find_map(|x|x.strip_prefix("requested=")).unwrap_or(locked);
+            let owner=reply.split_whitespace().find_map(|x|x.strip_prefix("owner=")).unwrap_or("none");
+            let running=reply.split_whitespace().find_map(|x|x.strip_prefix("running=")).unwrap_or("1");
+            if running=="1"{
+                let state=match (requested,locked){
+                    ("1","1")=>match owner{
+                        "aim"=>"Mouse: 🎯 AIM LOCKED",
+                        "manual"=>"Mouse: 🔒 MANUAL LOCK",
+                        _=>"Mouse: 🔒 LOCKED",
+                    },
+                    ("1","0")=>"Mouse: 🔄 LOCKING…",
+                    ("0","1")=>"Mouse: 🔄 UNLOCKING…",
+                    _=>"Mouse: 🖱 UNLOCKED",
+                };
+                ui.lock_status.set_text(state);
+            }else{
+                ui.lock_status.set_text("Mouse: offline");
             }
         }
         Err(_) => {
@@ -2617,352 +2430,155 @@ fn build_ui(app: &Application) {
     let profile_list = ListBox::new();
     profile_list.set_selection_mode(gtk4::SelectionMode::Single);
     profile_list.set_vexpand(true);
+    let canvas=DrawingArea::new();canvas.set_content_width(860);canvas.set_content_height(620);canvas.set_hexpand(true);canvas.set_vexpand(true);
 
-    let canvas = DrawingArea::new();
-    canvas.set_content_width(820);
-    canvas.set_content_height(580);
-    canvas.set_hexpand(true);
-    canvas.set_vexpand(true);
+    let status=Label::new(Some("Ready"));status.set_halign(gtk4::Align::Start);add_margins(&status,6);
 
-    let status = Label::new(Some("Ready"));
-    status.set_halign(gtk4::Align::Start);
-    status.set_hexpand(true);
-    add_margins(&status, 8);
+    let profile_name=Entry::new();
+    let width=make_spin(320.,16384.,1.,0);let height=make_spin(240.,16384.,1.,0);
+    let keyboard=ComboBoxText::new();let mouse=ComboBoxText::new();
 
-    let profile_name = Entry::new();
-    let width = make_spin(320., 16384., 1., 0);
-    let height = make_spin(240., 16384., 1., 0);
-    let keyboard = ComboBoxText::new();
-    let mouse = ComboBoxText::new();
+    let aim_enabled=CheckButton::with_label("Enable aim");
+    let aim_button=Entry::new();
+    let aim_mode=ComboBoxText::new();aim_mode.append(Some("touch"),"Touch / absolute");aim_mode.append(Some("relative"),"Relative / FPS");let aim_x=make_spin(0.,1.,0.01,3);let aim_y=make_spin(0.,1.,0.01,3);
+    let aim_sensitivity=make_spin(0.01,20.,0.05,2);let aim_slot=make_spin(0.,15.,1.,0);
+    let aim_invert_x=CheckButton::with_label("Invert X");let aim_invert_y=CheckButton::with_label("Invert Y");
+    let aim_scale_x=make_spin(0.01,20.,0.05,2);let aim_scale_y=make_spin(0.01,20.,0.05,2);let aim_edge_margin=make_spin(0.,0.49,0.01,2);
+    let joy_enabled=CheckButton::with_label("Enable joystick");
+    let joy_up=Entry::new();let joy_down=Entry::new();let joy_left=Entry::new();let joy_right=Entry::new();
+    let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);let joy_normalize=CheckButton::with_label("Normalize diagonals");
+    let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
+    let realtime_priority=make_spin(1.,99.,1.,0);let fifo_write_retries=make_spin(1.,8.,1.,0);let fifo_write_wait=make_spin(0.,5.,1.,0);let fifo_reconnect=make_spin(5.,2000.,5.,0);
+    let touch_pressure=make_spin(1.,255.,1.,0);let touch_major=make_spin(1.,255.,1.,0);let touch_minor=make_spin(1.,255.,1.,0);
+    let mouse_lock=CheckButton::with_label("Lock mouse on start");
+    let auto_lock_on_aim=CheckButton::with_label("Auto-lock while Aim is held");
+    let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
+    let runtime_status=Label::new(Some("Service: Not installed"));
+    let lock_status=Label::new(Some("Mouse: offline"));
+    let input_access=Label::new(Some("Keyboard: checking…\nMouse: checking…"));
+    runtime_status.set_halign(gtk4::Align::Start);
+    lock_status.set_halign(gtk4::Align::Start);
+    input_access.set_halign(gtk4::Align::Start);
+    input_access.set_wrap(true);
 
-    let aim_enabled = CheckButton::with_label("Enable Aim / Camera Look");
-    let aim_button = Entry::new();
-    let aim_mode = ComboBoxText::new();
-    aim_mode.append(Some("relative"), "Relative / FPS Mouse Aim (Unbounded)");
-    aim_mode.append(Some("touch"), "Touch / Absolute Aim");
-    let aim_x = make_spin(0., 1., 0.01, 3);
-    let aim_y = make_spin(0., 1., 0.01, 3);
-    let aim_sensitivity = make_spin(0.01, 20., 0.05, 2);
-    let aim_slot = make_spin(0., 15., 1., 0);
-    let aim_invert_x = CheckButton::with_label("Invert X Axis");
-    let aim_invert_y = CheckButton::with_label("Invert Y Axis");
-    let aim_scale_x = make_spin(0.01, 20., 0.05, 2);
-    let aim_scale_y = make_spin(0.01, 20., 0.05, 2);
-    let aim_edge_margin = make_spin(0., 0.49, 0.01, 2);
+    let bindings_box=GtkBox::new(Orientation::Vertical,6);
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_x:aim_invert_x.clone(),aim_invert_y:aim_invert_y.clone(),aim_scale_x:aim_scale_x.clone(),aim_scale_y:aim_scale_y.clone(),aim_edge_margin:aim_edge_margin.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),joy_normalize:joy_normalize.clone(),grab:grab.clone(),realtime:realtime.clone(),realtime_priority:realtime_priority.clone(),fifo_write_retries:fifo_write_retries.clone(),fifo_write_wait:fifo_write_wait.clone(),fifo_reconnect:fifo_reconnect.clone(),touch_pressure:touch_pressure.clone(),touch_major:touch_major.clone(),touch_minor:touch_minor.clone(), mouse_lock:mouse_lock.clone(),auto_lock_on_aim:auto_lock_on_aim.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
 
-    let joy_enabled = CheckButton::with_label("Enable Analog Joystick (WASD)");
-    let joy_up = Entry::new();
-    let joy_down = Entry::new();
-    let joy_left = Entry::new();
-    let joy_right = Entry::new();
-    let joy_x = make_spin(0., 1., 0.01, 3);
-    let joy_y = make_spin(0., 1., 0.01, 3);
-    let joy_radius = make_spin(0.01, 1., 0.005, 3);
-    let joy_slot = make_spin(0., 15., 1., 0);
-    let joy_normalize = CheckButton::with_label("Normalize Diagonal Speed");
+    let root=GtkBox::new(Orientation::Vertical,0);
+    let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
+    let title=Label::new(Some("Waydroid Keymapper • Shooter Control Editor"));title.add_css_class("title-2");title.set_hexpand(true);title.set_halign(gtk4::Align::Start);
+    let new_btn=Button::with_label("New");let dup_btn=Button::with_label("Duplicate");let del_btn=Button::with_label("Delete");
+    let validate=Button::with_label("Validate");let save=Button::with_label("Save");let apply=Button::with_label("Apply & Run");
+    header.append(&title);header.append(&new_btn);header.append(&dup_btn);header.append(&del_btn);header.append(&validate);header.append(&save);header.append(&apply);
+    root.append(&header);root.append(&Separator::new(Orientation::Horizontal));
 
-    let grab = CheckButton::with_label("Exclusive Input Grab (Gaming Capture)");
-    let realtime = CheckButton::with_label("Realtime Priority (SCHED_FIFO)");
-    let realtime_priority = make_spin(1., 99., 1., 0);
-    let fifo_write_retries = make_spin(1., 8., 1., 0);
-    let fifo_write_wait = make_spin(0., 5., 1., 0);
-    let fifo_reconnect = make_spin(5., 2000., 5., 0);
-    let touch_pressure = make_spin(1., 255., 1., 0);
-    let touch_major = make_spin(1., 255., 1., 0);
-    let touch_minor = make_spin(1., 255., 1., 0);
+    let paned=Paned::new(Orientation::Horizontal);paned.set_wide_handle(true);
+    let left=GtkBox::new(Orientation::Vertical,6);add_margins(&left,8);
+    left.append(&Label::new(Some("Profiles")));
+    let profile_scroll=ScrolledWindow::new();profile_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);profile_scroll.set_child(Some(&profile_list));profile_scroll.set_min_content_width(220);profile_scroll.set_vexpand(true);left.append(&profile_scroll);
+    let addbar=GtkBox::new(Orientation::Horizontal,5);
+    let add_key_tap=Button::with_label("+ Key TAP");
+    let add_key_hold=Button::with_label("+ Key HOLD");
+    let add_mouse_tap=Button::with_label("+ Mouse TAP");
+    let add_mouse_hold=Button::with_label("+ Mouse HOLD");
+    addbar.append(&add_key_tap);addbar.append(&add_key_hold);
+    addbar.append(&add_mouse_tap);addbar.append(&add_mouse_hold);
+    left.append(&addbar);
+    let bindings_scroll=ScrolledWindow::new();bindings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
+    bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(true);bindings_scroll.set_min_content_height(240);
+    left.append(&bindings_scroll);
 
-    let mouse_lock = CheckButton::with_label("Lock mouse on daemon start");
-    let mouse_toggle = Entry::new();
-    mouse_toggle.set_text("F8");
+    let center=GtkBox::new(Orientation::Vertical,0);center.append(&canvas);center.append(&status);
+    let right=GtkBox::new(Orientation::Vertical,4);add_margins(&right,8);
+    let settings_scroll=ScrolledWindow::new();settings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
+    settings_scroll.set_child(Some(&right));settings_scroll.set_vexpand(true);settings_scroll.set_min_content_width(340);
 
-    let runtime_status = Label::new(Some("Daemon: Checking…"));
-    let lock_status = Label::new(Some("Mouse: Offline"));
-    let waydroid_status = Label::new(Some("Waydroid: Checking…"));
-    let input_access = Label::new(Some("Checking device access…"));
+    let presets=add_section(&right,"Shooter Presets");
+    let preset_help=Label::new(Some("Optimized starting layouts for Free Fire and FPS/BR games. Coordinates are intentionally editable."));
+    preset_help.set_wrap(true);preset_help.set_halign(gtk4::Align::Start);presets.append(&preset_help);
+    let preset_bar=GtkBox::new(Orientation::Horizontal,5);
+    let free_fire_btn=Button::with_label("Free Fire");
+    let fps_btn=Button::with_label("FPS / BR");
+    let minimal_btn=Button::with_label("Minimal");
+    preset_bar.append(&free_fire_btn);preset_bar.append(&fps_btn);preset_bar.append(&minimal_btn);
+    presets.append(&preset_bar);
 
-    runtime_status.add_css_class("status-badge");
-    lock_status.add_css_class("status-badge");
-    waydroid_status.add_css_class("status-badge");
+    let general=add_section(&right,"Profile / Display");
+    let g=Grid::new();g.set_row_spacing(7);g.set_column_spacing(8);
+    form_row(&g,0,"Profile",&profile_name);form_row(&g,1,"Width",&width);form_row(&g,2,"Height",&height);
+    general.append(&g);
 
-    let bindings_box = GtkBox::new(Orientation::Vertical, 6);
-    let selected_editor_box = GtkBox::new(Orientation::Vertical, 6);
+    let devices=add_section(&right,"Input devices");
+    let dg=Grid::new();dg.set_row_spacing(7);dg.set_column_spacing(8);
+    form_row(&dg,0,"Keyboard",&keyboard);form_row(&dg,1,"Mouse",&mouse);devices.append(&dg);
+    let refresh_dev=Button::with_label("Refresh devices");
+    let fix_input=Button::with_label("🔑 Repair input permissions");
+    devices.append(&refresh_dev);devices.append(&fix_input);
+    devices.append(&input_access);
 
-    let ui = Ui {
-        state: state.clone(),
-        profile_list: profile_list.clone(),
-        bindings_box: bindings_box.clone(),
-        canvas: canvas.clone(),
-        status: status.clone(),
-        profile_name: profile_name.clone(),
-        width: width.clone(),
-        height: height.clone(),
-        keyboard: keyboard.clone(),
-        mouse: mouse.clone(),
-        aim_enabled: aim_enabled.clone(),
-        aim_button: aim_button.clone(),
-        aim_mode: aim_mode.clone(),
-        aim_x: aim_x.clone(),
-        aim_y: aim_y.clone(),
-        aim_sensitivity: aim_sensitivity.clone(),
-        aim_slot: aim_slot.clone(),
-        aim_invert_x: aim_invert_x.clone(),
-        aim_invert_y: aim_invert_y.clone(),
-        aim_scale_x: aim_scale_x.clone(),
-        aim_scale_y: aim_scale_y.clone(),
-        aim_edge_margin: aim_edge_margin.clone(),
-        joy_enabled: joy_enabled.clone(),
-        joy_up: joy_up.clone(),
-        joy_down: joy_down.clone(),
-        joy_left: joy_left.clone(),
-        joy_right: joy_right.clone(),
-        joy_x: joy_x.clone(),
-        joy_y: joy_y.clone(),
-        joy_radius: joy_radius.clone(),
-        joy_slot: joy_slot.clone(),
-        joy_normalize: joy_normalize.clone(),
-        grab: grab.clone(),
-        realtime: realtime.clone(),
-        realtime_priority: realtime_priority.clone(),
-        fifo_write_retries: fifo_write_retries.clone(),
-        fifo_write_wait: fifo_write_wait.clone(),
-        fifo_reconnect: fifo_reconnect.clone(),
-        touch_pressure: touch_pressure.clone(),
-        touch_major: touch_major.clone(),
-        touch_minor: touch_minor.clone(),
-        mouse_lock: mouse_lock.clone(),
-        mouse_toggle: mouse_toggle.clone(),
-        runtime_status: runtime_status.clone(),
-        lock_status: lock_status.clone(),
-        waydroid_status: waydroid_status.clone(),
-        input_access: input_access.clone(),
-        selected_editor_box: selected_editor_box.clone(),
-    };
+    let aim=add_section(&right,"Aim");
+    aim.append(&aim_enabled);
+    let ag=Grid::new();ag.set_row_spacing(7);ag.set_column_spacing(8);
+    form_row(&ag,0,"Button",&aim_button);form_row(&ag,1,"Mode",&aim_mode);form_row(&ag,2,"Center X",&aim_x);form_row(&ag,3,"Center Y",&aim_y);
+    form_row(&ag,4,"Sensitivity",&aim_sensitivity);form_row(&ag,5,"Slot",&aim_slot);form_row(&ag,6,"X scale",&aim_scale_x);form_row(&ag,7,"Y scale",&aim_scale_y);form_row(&ag,8,"Edge margin",&aim_edge_margin);
+    ag.attach(&aim_invert_x,1,9,1,1);ag.attach(&aim_invert_y,1,10,1,1);aim.append(&ag);
 
-    let root = GtkBox::new(Orientation::Vertical, 0);
+    let joystick=add_section(&right,"Joystick");
+    joystick.append(&joy_enabled);
+    let jg=Grid::new();jg.set_row_spacing(7);jg.set_column_spacing(8);
+    form_row(&jg,0,"Up",&joy_up);form_row(&jg,1,"Down",&joy_down);form_row(&jg,2,"Left",&joy_left);form_row(&jg,3,"Right",&joy_right);
+    form_row(&jg,4,"Center X",&joy_x);form_row(&jg,5,"Center Y",&joy_y);form_row(&jg,6,"Radius",&joy_radius);form_row(&jg,7,"Slot",&joy_slot);
+    jg.attach(&joy_normalize,1,8,1,1);joystick.append(&jg);
 
-    // Top Header & Controls
-    let top_bar = GtkBox::new(Orientation::Horizontal, 8);
-    add_margins(&top_bar, 8);
+    let perf=add_section(&right,"Performance");perf.append(&grab);perf.append(&realtime);perf.append(&mouse_lock);perf.append(&auto_lock_on_aim);
+    let mg=Grid::new();mg.set_row_spacing(7);mg.set_column_spacing(8);
+    let toggle_box=GtkBox::new(Orientation::Horizontal,5);
+    let capture_toggle=Button::with_label("Capture");
+    toggle_box.append(&mouse_toggle);toggle_box.append(&capture_toggle);
+    form_row(&mg,0,"Lock toggle key",&toggle_box);form_row(&mg,1,"RT priority",&realtime_priority);form_row(&mg,2,"FIFO retries",&fifo_write_retries);form_row(&mg,3,"FIFO wait (ms)",&fifo_write_wait);form_row(&mg,4,"FIFO reconnect (ms)",&fifo_reconnect);perf.append(&mg);
+    let help=Label::new(Some("Aim ownership is automatic when enabled: RMB can enter FPS aim without pressing F8 first. The toggle key remains reserved for manual mouse capture."));
+    help.set_wrap(true);help.set_halign(gtk4::Align::Start);perf.append(&help);
 
-    let title_box = GtkBox::new(Orientation::Vertical, 2);
-    let title = Label::new(Some("🎮 Waydroid Keymapper"));
-    title.add_css_class("title-2");
-    title.set_halign(gtk4::Align::Start);
-    let sub = Label::new(Some("Ultra Low-Latency Touch & Mouse Mapper for Waydroid"));
-    sub.set_halign(gtk4::Align::Start);
-    title_box.append(&title);
-    title_box.append(&sub);
-    top_bar.append(&title_box);
+    let touch=add_section(&right,"Touch input tuning");
+    let tg=Grid::new();tg.set_row_spacing(7);tg.set_column_spacing(8);
+    form_row(&tg,0,"Pressure",&touch_pressure);form_row(&tg,1,"Major",&touch_major);form_row(&tg,2,"Minor",&touch_minor);touch.append(&tg);
+    let touch_help=Label::new(Some("Advanced Android touch-device parameters. Defaults are conservative; change them only for compatibility tuning."));touch_help.set_wrap(true);touch_help.set_halign(gtk4::Align::Start);touch.append(&touch_help);
 
-    let spacer = Label::new(None);
-    spacer.set_hexpand(true);
-    top_bar.append(&spacer);
+    let runtime=add_section(&right,"Runtime");
+    runtime.append(&runtime_status);runtime.append(&lock_status);
+    let rb1=GtkBox::new(Orientation::Horizontal,5);
+    let install_btn=Button::with_label("Install / Repair");
+    let start_btn=Button::with_label("Start");
+    let stop_btn=Button::with_label("Stop");
+    let restart_btn=Button::with_label("Restart");
+    let enable_btn=Button::with_label("Enable at login");
+    let disable_btn=Button::with_label("Disable at login");
+    let diagnostics_btn=Button::with_label("🔍 Diagnostics");
+    rb1.append(&install_btn);rb1.append(&start_btn);rb1.append(&stop_btn);rb1.append(&restart_btn);runtime.append(&rb1);
+    let rb0=GtkBox::new(Orientation::Horizontal,5);
+    rb0.append(&enable_btn);rb0.append(&disable_btn);runtime.append(&rb0);
+    runtime.append(&diagnostics_btn);
+    let rb2=GtkBox::new(Orientation::Horizontal,5);
+    let lock_btn=Button::with_label("🔒 Lock mouse");
+    let unlock_btn=Button::with_label("🖱 Unlock mouse");
+    let toggle_btn=Button::with_label("Toggle");
+    rb2.append(&lock_btn);rb2.append(&unlock_btn);rb2.append(&toggle_btn);runtime.append(&rb2);
+    let lock_help=Label::new(Some("Aim can own the mouse automatically while held (recommended for Free Fire/FPS). F8 is the manual lock toggle; Ctrl+Alt+F12 is the emergency unlock."));
+    lock_help.set_wrap(true);lock_help.set_halign(gtk4::Align::Start);runtime.append(&lock_help);
+    let waydroid_state_label=Label::new(Some(&format!("Waydroid: {}",waydroid_state())));
+    waydroid_state_label.set_halign(gtk4::Align::Start);runtime.append(&waydroid_state_label);
+    let wb=GtkBox::new(Orientation::Horizontal,5);
+    let waydroid_start=Button::with_label("Start Waydroid");
+    let waydroid_stop=Button::with_label("Stop Waydroid");
+    wb.append(&waydroid_start);wb.append(&waydroid_stop);runtime.append(&wb);
 
-    // Live Status Badges
-    top_bar.append(&runtime_status);
-    top_bar.append(&lock_status);
-    top_bar.append(&waydroid_status);
+    paned.set_start_child(Some(&left));paned.set_resize_start_child(true);paned.set_shrink_start_child(false);
+    paned.set_end_child(Some(&center));paned.set_resize_end_child(true);
+    root.append(&paned);
 
-    // Top action buttons
-    let save_btn = Button::with_label("💾 Save");
-    save_btn.add_css_class("btn-accent");
-    let apply_btn = Button::with_label("🚀 Apply & Run");
-    apply_btn.add_css_class("btn-success");
-    let toggle_lock_btn = Button::with_label("🔒 Toggle Lock (F8)");
-    toggle_lock_btn.add_css_class("btn-primary");
-    let diag_btn = Button::with_label("🔍 Diagnostics");
-    diag_btn.add_css_class("btn-accent");
-
-    top_bar.append(&save_btn);
-    top_bar.append(&apply_btn);
-    top_bar.append(&toggle_lock_btn);
-    top_bar.append(&diag_btn);
-
-    root.append(&top_bar);
-    root.append(&Separator::new(Orientation::Horizontal));
-
-    // Three-Panel Split
-    let left = GtkBox::new(Orientation::Vertical, 6);
-    add_margins(&left, 6);
-    left.set_size_request(240, -1);
-
-    // Profiles Card
-    let prof_sec = add_section(&left, "Profiles");
-    let prof_btn_box = GtkBox::new(Orientation::Horizontal, 4);
-    let new_btn = Button::with_label("+ New");
-    new_btn.add_css_class("btn-accent");
-    let dup_btn = Button::with_label("📋 Copy");
-    dup_btn.add_css_class("btn-accent");
-    let del_btn = Button::with_label("🗑 Delete");
-    del_btn.add_css_class("btn-danger");
-    prof_btn_box.append(&new_btn);
-    prof_btn_box.append(&dup_btn);
-    prof_btn_box.append(&del_btn);
-    prof_sec.append(&prof_btn_box);
-
-    let profile_scroll = ScrolledWindow::new();
-    profile_scroll.set_policy(PolicyType::Never, PolicyType::Automatic);
-    profile_scroll.set_child(Some(&profile_list));
-    profile_scroll.set_min_content_height(140);
-    prof_sec.append(&profile_scroll);
-
-    // Presets Card
-    let presets = add_section(&left, "Shooter Presets");
-    let preset_grid = Grid::new();
-    preset_grid.set_row_spacing(6);
-    preset_grid.set_column_spacing(6);
-    let free_fire_btn = Button::with_label("🔥 Free Fire");
-    free_fire_btn.add_css_class("btn-accent");
-    let pubg_btn = Button::with_label("🎯 PUBG Mobile");
-    pubg_btn.add_css_class("btn-accent");
-    let fps_btn = Button::with_label("🎮 FPS Standard");
-    fps_btn.add_css_class("btn-accent");
-    let minimal_btn = Button::with_label("⚡ Minimal");
-    minimal_btn.add_css_class("btn-accent");
-
-    preset_grid.attach(&free_fire_btn, 0, 0, 1, 1);
-    preset_grid.attach(&pubg_btn, 1, 0, 1, 1);
-    preset_grid.attach(&fps_btn, 0, 1, 1, 1);
-    preset_grid.attach(&minimal_btn, 1, 1, 1, 1);
-    presets.append(&preset_grid);
-
-    // Service & Waydroid Controls
-    let svc_sec = add_section(&left, "Daemon & Waydroid");
-    let svc_b1 = GtkBox::new(Orientation::Horizontal, 4);
-    let start_btn = Button::with_label("▶ Start");
-    start_btn.add_css_class("btn-accent");
-    let stop_btn = Button::with_label("⏹ Stop");
-    stop_btn.add_css_class("btn-danger");
-    let restart_btn = Button::with_label("🔄 Restart");
-    restart_btn.add_css_class("btn-accent");
-    svc_b1.append(&start_btn);
-    svc_b1.append(&stop_btn);
-    svc_b1.append(&restart_btn);
-    svc_sec.append(&svc_b1);
-
-    let wd_b = GtkBox::new(Orientation::Horizontal, 4);
-    let wd_start = Button::with_label("Start Waydroid");
-    wd_start.add_css_class("btn-accent");
-    let wd_stop = Button::with_label("Stop Waydroid");
-    wd_stop.add_css_class("btn-danger");
-    wd_b.append(&wd_start);
-    wd_b.append(&wd_stop);
-    svc_sec.append(&wd_b);
-
-    let fix_input = Button::with_label("🔑 Repair Input Permissions");
-    fix_input.add_css_class("btn-accent");
-    svc_sec.append(&fix_input);
-
-    // Bindings List Card
-    let bindings_sec = add_section(&left, "Configured Controls");
-    let addbar = GtkBox::new(Orientation::Horizontal, 4);
-    let add_key_tap = Button::with_label("+ Key TAP");
-    add_key_tap.add_css_class("btn-accent");
-    let add_key_hold = Button::with_label("+ Key HOLD");
-    add_key_hold.add_css_class("btn-accent");
-    let add_mouse_hold = Button::with_label("+ Fire / Click");
-    add_mouse_hold.add_css_class("btn-accent");
-    addbar.append(&add_key_tap);
-    addbar.append(&add_key_hold);
-    addbar.append(&add_mouse_hold);
-    bindings_sec.append(&addbar);
-
-    let bindings_scroll = ScrolledWindow::new();
-    bindings_scroll.set_policy(PolicyType::Never, PolicyType::Automatic);
-    bindings_scroll.set_child(Some(&bindings_box));
-    bindings_scroll.set_vexpand(true);
-    bindings_scroll.set_min_content_height(180);
-    bindings_sec.append(&bindings_scroll);
-
-    // Center Panel (Visual Canvas)
-    let center = GtkBox::new(Orientation::Vertical, 4);
-    add_margins(&center, 6);
-    center.append(&canvas);
-
-    let bottom_bar = GtkBox::new(Orientation::Horizontal, 8);
-    add_margins(&bottom_bar, 4);
-    bottom_bar.append(&status);
-    center.append(&bottom_bar);
-
-    // Right Panel (Properties & Hardware)
-    let right = GtkBox::new(Orientation::Vertical, 6);
-    add_margins(&right, 6);
-    right.set_size_request(280, -1);
-
-    let settings_scroll = ScrolledWindow::new();
-    settings_scroll.set_policy(PolicyType::Never, PolicyType::Automatic);
-    settings_scroll.set_child(Some(&right));
-    settings_scroll.set_vexpand(true);
-
-    // Selected Item Editor Card
-    let sel_sec = add_section(&right, "Selected Control");
-    sel_sec.append(&selected_editor_box);
-
-    // Aim Settings Card
-    let aim_sec = add_section(&right, "Aim / Camera Control");
-    aim_sec.append(&aim_enabled);
-    let ag = Grid::new();
-    ag.set_row_spacing(6);
-    ag.set_column_spacing(8);
-    form_row(&ag, 0, "Trigger", &aim_button);
-    form_row(&ag, 1, "Mode", &aim_mode);
-    form_row(&ag, 2, "Center X", &aim_x);
-    form_row(&ag, 3, "Center Y", &aim_y);
-    form_row(&ag, 4, "Sensitivity", &aim_sensitivity);
-    form_row(&ag, 5, "Touch Slot", &aim_slot);
-    form_row(&ag, 6, "Scale X", &aim_scale_x);
-    form_row(&ag, 7, "Scale Y", &aim_scale_y);
-    ag.attach(&aim_invert_x, 0, 8, 2, 1);
-    ag.attach(&aim_invert_y, 0, 9, 2, 1);
-    aim_sec.append(&ag);
-
-    // Joystick Settings Card
-    let joy_sec = add_section(&right, "Joystick (WASD)");
-    joy_sec.append(&joy_enabled);
-    let jg = Grid::new();
-    jg.set_row_spacing(6);
-    jg.set_column_spacing(8);
-    form_row(&jg, 0, "Up Key", &joy_up);
-    form_row(&jg, 1, "Down Key", &joy_down);
-    form_row(&jg, 2, "Left Key", &joy_left);
-    form_row(&jg, 3, "Right Key", &joy_right);
-    form_row(&jg, 4, "Center X", &joy_x);
-    form_row(&jg, 5, "Center Y", &joy_y);
-    form_row(&jg, 6, "Radius", &joy_radius);
-    form_row(&jg, 7, "Touch Slot", &joy_slot);
-    jg.attach(&joy_normalize, 0, 8, 2, 1);
-    joy_sec.append(&jg);
-
-    // Devices & Display Card
-    let dev_sec = add_section(&right, "Input Devices & Screen");
-    let dg = Grid::new();
-    dg.set_row_spacing(6);
-    dg.set_column_spacing(8);
-    form_row(&dg, 0, "Keyboard", &keyboard);
-    form_row(&dg, 1, "Mouse", &mouse);
-    form_row(&dg, 2, "Screen Width", &width);
-    form_row(&dg, 3, "Screen Height", &height);
-    form_row(&dg, 4, "Toggle Key", &mouse_toggle);
-    dev_sec.append(&dg);
-
-    let refresh_dev = Button::with_label("🔄 Refresh Devices");
-    refresh_dev.add_css_class("btn-accent");
-    dev_sec.append(&refresh_dev);
-
-    // Performance & Fine Tuning
-    let perf_sec = add_section(&right, "Performance & Timings");
-    perf_sec.append(&grab);
-    perf_sec.append(&realtime);
-    perf_sec.append(&mouse_lock);
-
-    // Assemble Split Panes
-    let paned_left = Paned::new(Orientation::Horizontal);
-    paned_left.set_start_child(Some(&left));
-    paned_left.set_end_child(Some(&center));
-    paned_left.set_position(300);
-
-    let main_paned = Paned::new(Orientation::Horizontal);
-    main_paned.set_start_child(Some(&paned_left));
+    // The right panel is added as an overlay-like third pane through a secondary Paned.
+    let main_paned=Paned::new(Orientation::Horizontal);
+    main_paned.set_start_child(Some(&paned));
     main_paned.set_end_child(Some(&settings_scroll));
     main_paned.set_position(1180);
 

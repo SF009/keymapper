@@ -18,20 +18,18 @@ normalize_diagonal = true
 slot = 0
 
 [aim]
-# Use "ALWAYS" for standard continuous FPS mouse-look whenever mouse is locked (F8),
-# or specify a button like "MOUSE_RIGHT" for hold-to-aim.
-button = "ALWAYS"
-center_x = 0.50
-center_y = 0.50
-sensitivity = 2.0
-slot = 1
-invert_x = false
-invert_y = false
-scale_x = 1.0
-scale_y = 1.0
-edge_margin = 0.12
-# "relative" = unbounded low-latency FPS mouse aim (recommended); "touch" = absolute touch emulator
-mode = "relative"
+button="MOUSE_RIGHT"
+center_x=0.50
+center_y=0.50
+sensitivity=2.0
+slot=1
+invert_x=false
+invert_y=false
+scale_x=1.0
+scale_y=1.0
+edge_margin=0.12
+# touch = compatible absolute aim; relative = unbounded FPS mouse aim. Relative mode auto-locks while RMB is held.
+mode="relative"
 
 [[taps]]
 key = "SPACE"
@@ -74,12 +72,14 @@ grab = true
 realtime = true
 realtime_priority = 10
 mouse_lock = false
-# F8 toggles capture: locked -> full gaming controls, unlocked -> normal desktop controls
-mouse_toggle_key = "F8"
-# Bounded FIFO tuning for lowest input latency
-fifo_write_retries = 3
-fifo_write_wait_ms = 1
-fifo_reconnect_ms = 25
+# Helper-style: pressing/holding the Aim button acquires the mouse automatically.
+auto_lock_on_aim = true
+# F8 is the manual lock toggle; Ctrl+Alt+F12 is the emergency unlock.
+mouse_toggle_key="F8"
+# Bounded FIFO tuning; keep defaults for lowest input latency
+fifo_write_retries=3
+fifo_write_wait_ms=1
+fifo_reconnect_ms=25
 
 [touch]
 pressure = 80
