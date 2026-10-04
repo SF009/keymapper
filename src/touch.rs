@@ -295,7 +295,7 @@ impl Mapper{
         let i=s as usize;
         if i>=16||!self.slots[i].down{return}
         let(x,y)=self.xy(x,y);
-        self.out_touch(&[(ABS,SLOT,s as i32),(ABS,X,x),(ABS,Y,y),(ABS,PRESS,80),(SYN,0,0)]);
+        self.out_touch(&[(ABS,SLOT,s as i32),(ABS,X,x),(ABS,Y,y),(ABS,PRESS,self.touch_cfg.0),(SYN,0,0)]);
     }
 
     fn any_down(&self)->bool{self.slots.iter().any(|c|c.down)}
