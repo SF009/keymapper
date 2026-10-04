@@ -434,6 +434,7 @@ mod tests{
     #[test]
     fn relative_mouse_accumulates_subpixel_motion(){
         let mut m=Mapper::new(cfg()).unwrap();
+        m.set_mouse_lock(true);
         m.button(KeyCode::BTN_RIGHT.0,1);
         assert!((m.rel_acc_x-0.0).abs()<f32::EPSILON);
         m.mouse(1,0);
