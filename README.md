@@ -160,3 +160,8 @@ The project is intentionally small enough to run comfortably on low-RAM systems.
 ## License
 
 GPL-3.0-or-later
+
+
+### Mouse lock safety
+
+Locking the mouse intentionally grabs the selected physical evdev mouse so GNOME cannot consume the same movement stream. The GUI therefore cannot receive mouse clicks while the lock is active. Use the configured toggle key (default `F8`) to unlock; `Ctrl+Alt+F12` is a built-in emergency unlock and remains available even when the keyboard is grabbed.
