@@ -57,7 +57,7 @@ fn main()->Result<(),Box<dyn Error>>{
   return Ok(())
  }
  if cmd!="run"{eprintln!("usage: waydroid-keymapper <run|check|devices> [config]");return Ok(())}
- cfg.validate()?;
+ cfg.validate_runtime()?;
  let mapper=Arc::new(Mutex::new(Mapper::new(cfg.clone())?));
  let control=RuntimeControl::new(cfg.performance.mouse_lock)?;
  if let Some(d)=cfg.devices.keyboard.clone(){spawn_input(d,InputKind::Keyboard,mapper.clone(),control.clone())?}
