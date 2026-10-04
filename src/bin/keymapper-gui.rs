@@ -415,54 +415,24 @@ fn fill_devices(combo:&ComboBoxText,selected:&Option<String>,mouse:bool){
     combo.remove_all();
     combo.append(None,"(None)");
 
-    let mut candidates:Vec<(i32,String,String)>=Vec::new();
-    for(path,d)in evdev::enumerate(){
-        let is_mouse=d.supported_keys().map(|k|
-            k.contains(evdev::KeyCode::BTN_LEFT)||
-            k.contains(evdev::KeyCode::BTN_RIGHT)||
-            k.contains(evdev::KeyCode::BTN_MIDDLE)
-        ).unwrap_or(false);
-        let has_relative=d.supported_relative_axes().map(|a|
-            a.contains(evdev::RelativeAxisCode::REL_X)||
-            a.contains(evdev::RelativeAxisCode::REL_Y)
-        ).unwrap_or(false);
-        let is_keyboard=d.supported_keys().map(|k|
-            k.contains(evdev::KeyCode::KEY_A)||
-            k.contains(evdev::KeyCode::KEY_W)||
-            k.contains(evdev::KeyCode::KEY_ENTER)
-        ).unwrap_or(false);
+    let candidates:Vec<input::InputDeviceInfo>=input::list_input_devices()
+        .into_iter()
+        .filter(|d|if mouse{d.is_mouse}else{d.is_keyboard})
+        .collect();
 
-        if mouse{
-            if !(is_mouse&&has_relative){continue}
-        }else if !is_keyboard{
-            continue
-        }
-
-        let id=path.to_string_lossy().to_string();
-        let name=d.name().unwrap_or("input").to_string();
-        let lower=name.to_ascii_lowercase();
-        let mut score=0;
-        if !lower.contains("virtual"){score+=40}
-        if !lower.contains("ydotool"){score+=40}
-        if !lower.contains("keyd"){score+=40}
-        if mouse{
-            if lower.contains("usb"){score+=25}
-            if lower.contains("optical"){score+=15}
-            if lower.contains("touchpad"){score-=35}
-        }else{
-            if lower.contains("at translated"){score+=25}
-            if lower.contains("keyboard"){score+=15}
-        }
-        candidates.push((score,id,format!("{} — {}",name,id)));
+    for d in &candidates{
+        let label=format!("{} — {}",d.name,d.path);
+        combo.append(Some(&d.path),&label);
     }
 
-    candidates.sort_by(|a,b|b.0.cmp(&a.0).then_with(||a.1.cmp(&b.1)));
-    for(_,id,label)in &candidates{combo.append(Some(id),label);}
-
     if let Some(s)=selected{
+        let found=candidates.iter().any(|d|d.path==*s);
+        if !found{
+            combo.append(Some(s),&format!("⚠ Missing device — {}",s));
+        }
         if !combo.set_active_id(Some(s)){combo.set_active(Some(0));}
-    }else if let Some((_,id,_))=candidates.first(){
-        combo.set_active_id(Some(id));
+    }else if let Some(d)=candidates.first(){
+        combo.set_active_id(Some(&d.path));
     }else{
         combo.set_active(Some(0));
     }
