@@ -17,7 +17,7 @@ Low-latency keyboard/mouse to multitouch mapper for Waydroid.
 - tracking IDs and pressure/major/minor fields
 - normalized coordinates, independent of desktop resolution
 - direct Waydroid touch FIFO output
-- reconnect after Waydroid restarts
+- reconnect after Waydroid restarts and stable hotplug device paths when available
 - CLI commands: run, check, devices
 - user systemd unit and udev permissions
 
@@ -99,9 +99,9 @@ Profiles are stored in:
     ~/.config/waydroid-keymapper/profiles/
 
 The GUI supports:
-- automatic physical keyboard/mouse detection with virtual-device filtering
-- live daemon status and live mouse LOCKED/UNLOCKED state through a private per-user Unix control socket
-- Install / Repair, Start, Stop and Restart for the user daemon service
+- automatic physical keyboard/mouse detection with stable `/dev/input/by-id` paths preferred and virtual-device filtering
+- live daemon status, mouse LOCKED/UNLOCKED state, and diagnostics through a private per-user Unix control socket
+- Install / Repair, Start, Stop, Restart, Enable-at-login and Disable-at-login for the user daemon service
 - direct Lock, Unlock and Toggle commands without editing TOML or using the terminal
 - Waydroid session Start/Stop controls and status display
 
