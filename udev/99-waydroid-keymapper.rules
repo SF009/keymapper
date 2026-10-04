@@ -1,2 +1,1 @@
-KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"
-KERNEL=="event*", SUBSYSTEM=="input", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", MODE="0660", GROUP="input", TAG+="uaccess"
