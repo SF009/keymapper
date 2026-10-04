@@ -589,6 +589,25 @@ mod runtime_control_tests{
     }
 
     #[test]
+    fn aim_lock_has_exclusive_ownership(){
+        let control=RuntimeControl::new(false).unwrap();
+        assert_eq!(control.owner_name(),"none");
+        assert!(control.request_aim_lock(true));
+        assert_eq!(control.owner_name(),"aim");
+        assert!(control.mouse_locked.load(Ordering::Acquire));
+        assert!(!control.request_aim_lock(true));
+        control.release_aim_lock();
+        assert_eq!(control.owner_name(),"none");
+        assert!(!control.mouse_locked.load(Ordering::Acquire));
+
+        assert_eq!(control.toggle(true),Some(true));
+        assert_eq!(control.owner_name(),"manual");
+        assert!(!control.request_aim_lock(true));
+        assert_eq!(control.toggle(true),Some(false));
+        assert_eq!(control.owner_name(),"none");
+    }
+
+    #[test]
     fn emergency_unlock_always_clears_state(){
         let control=RuntimeControl::new(true).unwrap();
         assert!(control.mouse_locked.load(Ordering::Acquire));
