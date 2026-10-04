@@ -24,7 +24,7 @@ sensitivity=2.0
 slot=1
 invert_y=false
 # touch = compatible absolute aim; relative = unbounded FPS mouse aim
-mode="touch"
+mode="relative"
 
 [[taps]]
 key="SPACE"
