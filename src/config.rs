@@ -90,7 +90,7 @@ impl Config{
  pub fn validate_runtime(&self)->Result<(),Box<dyn Error>>{
   self.validate()?;
 
-  let keyboard_required=self.joystick.is_some()||!self.taps.is_empty()||!self.holds.is_empty();
+  let keyboard_required=self.performance.mouse_lock||self.joystick.is_some()||!self.taps.is_empty()||!self.holds.is_empty();
   if keyboard_required&&self.devices.keyboard.as_deref().unwrap_or("").is_empty(){
    return Err("a keyboard device is required for the configured keyboard mappings".into())
   }
@@ -193,6 +193,10 @@ mod tests{
    center_x:0.15,center_y:0.76,radius:0.085,slot:0,
   });
   assert!(c.validate().is_ok());
+  assert!(c.validate_runtime().is_err());
+
+  c.joystick=None;
+  c.performance.mouse_lock=true;
   assert!(c.validate_runtime().is_err());
 
   c.devices.keyboard=Some("/dev/input/event0".into());
