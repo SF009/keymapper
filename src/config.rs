@@ -11,19 +11,21 @@ pub struct Config{
  #[serde(default)]pub holds:Vec<Hold>,
  #[serde(default)]pub mouse_taps:Vec<MouseTap>,
  #[serde(default)]pub mouse_holds:Vec<MouseHold>,
- #[serde(default)]pub performance:Performance
+ #[serde(default)]pub performance:Performance,#[serde(default)]pub touch:TouchSettings
 }
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Display{pub width:i32,pub height:i32}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Devices{pub keyboard:Option<String>,pub mouse:Option<String>}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Joystick{pub up:String,pub down:String,pub left:String,pub right:String,pub center_x:f32,pub center_y:f32,pub radius:f32,#[serde(default)]pub slot:u8}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Aim{pub button:String,pub center_x:f32,pub center_y:f32,#[serde(default="ds")]pub sensitivity:f32,#[serde(default="s1")]pub slot:u8,#[serde(default)]pub invert_y:bool,#[serde(default="touch_mode")]pub mode:String}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Joystick{pub up:String,pub down:String,pub left:String,pub right:String,pub center_x:f32,pub center_y:f32,pub radius:f32,#[serde(default="dtrue")]pub normalize_diagonal:bool,#[serde(default)]pub slot:u8}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Aim{pub button:String,pub center_x:f32,pub center_y:f32,#[serde(default="ds")]pub sensitivity:f32,#[serde(default="s1")]pub slot:u8,#[serde(default)]pub invert_x:bool,#[serde(default)]pub invert_y:bool,#[serde(default="one")]pub scale_x:f32,#[serde(default="one")]pub scale_y:f32,#[serde(default="touch_mode")]pub mode:String}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Tap{pub key:String,pub x:f32,pub y:f32,#[serde(default="s2")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Hold{pub key:String,pub x:f32,pub y:f32,#[serde(default="s3")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseTap{pub button:String,pub x:f32,pub y:f32,#[serde(default="s4")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseHold{pub button:String,pub x:f32,pub y:f32,#[serde(default="s5")]pub slot:u8}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="dm")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String}
-fn ds()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn dm()->bool{false} fn f8()->String{"F8".into()} fn touch_mode()->String{"touch".into()}
-impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,mouse_lock:false,mouse_toggle_key:"F8".into()}}}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="prio")]pub realtime_priority:i32,#[serde(default="dm")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String,#[serde(default="wr")]pub fifo_write_retries:u8,#[serde(default="ww")]pub fifo_write_wait_ms:u64,#[serde(default="rb")]pub fifo_reconnect_ms:u64}
+fn ds()->f32{1.0} fn one()->f32{1.0} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn dtrue()->bool{true} fn dm()->bool{false} fn f8()->String{"F8".into()} fn prio()->i32{10} fn wr()->u8{3} fn ww()->u64{1} fn rb()->u64{25} fn tp()->i32{80} fn tm()->i32{8} fn touch_mode()->String{"touch".into()}
+impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25}}}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct TouchSettings{#[serde(default="tp")]pub pressure:i32,#[serde(default="tm")]pub major:i32,#[serde(default="tm")]pub minor:i32}
+impl Default for TouchSettings{fn default()->Self{Self{pressure:80,major:8,minor:8}}}
 
 impl Config{
  pub fn conflicts(&self)->Vec<String>{
@@ -58,6 +60,11 @@ impl Config{
   if self.performance.mouse_lock&&!self.performance.grab{
    return Err("mouse_lock requires performance.grab=true".into())
   }
+  if self.performance.realtime_priority<1||self.performance.realtime_priority>99{return Err("realtime_priority must be 1..99".into())}
+  if self.performance.fifo_write_retries==0||self.performance.fifo_write_retries>16{return Err("fifo_write_retries must be 1..16".into())}
+  if self.performance.fifo_write_wait_ms>20{return Err("fifo_write_wait_ms must be 0..20 ms".into())}
+  if self.performance.fifo_reconnect_ms<5||self.performance.fifo_reconnect_ms>5000{return Err("fifo_reconnect_ms must be 5..5000 ms".into())}
+  if self.touch.pressure<1||self.touch.pressure>255||self.touch.major<1||self.touch.major>255||self.touch.minor<1||self.touch.minor>255{return Err("touch pressure/major/minor must be 1..255".into())}
   if let Some(j)=&self.joystick{
    for k in [&j.up,&j.down,&j.left,&j.right]{crate::input::key_code(k)?;}
    if !(0.0..=1.0).contains(&j.center_x)||!(0.0..=1.0).contains(&j.center_y)||j.radius<=0.0||j.radius>1.0{return Err("invalid joystick".into())}
@@ -76,7 +83,7 @@ impl Config{
   if let Some(a)=&self.aim{
    reserve(a.slot)?;
    crate::input::button_code(&a.button)?;
-   if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.sensitivity>100.0{return Err("invalid aim".into())}
+   if !(0.0..=1.0).contains(&a.center_x)||!(0.0..=1.0).contains(&a.center_y)||a.sensitivity<=0.0||a.sensitivity>100.0||a.scale_x<=0.0||a.scale_x>20.0||a.scale_y<=0.0||a.scale_y>20.0{return Err("invalid aim".into())}
    match a.mode.trim().to_ascii_lowercase().as_str(){"touch"|"relative"=>{},_=>return Err("aim mode must be touch or relative".into())}
   }
   for x in &self.taps{crate::input::key_code(&x.key)?;reserve(x.slot)?;if !(0.0..=1.0).contains(&x.x)||!(0.0..=1.0).contains(&x.y){return Err("invalid keyboard tap".into())}}
@@ -126,7 +133,7 @@ mod tests{
    devices:Devices{keyboard:None,mouse:None},
    joystick:None,aim:None,
    taps:Vec::new(),holds:Vec::new(),mouse_taps:Vec::new(),mouse_holds:Vec::new(),
-   performance:Performance::default(),
+   performance:Performance::default(),touch:TouchSettings::default(),
   }
  }
 
@@ -134,7 +141,7 @@ mod tests{
  fn default_performance_is_shooter_safe(){
   let p=Performance::default();
   assert!(p.grab&&p.realtime&&!p.mouse_lock);
-  assert_eq!(p.mouse_toggle_key,"F8");
+  assert_eq!(p.mouse_toggle_key,"F8");assert_eq!(p.realtime_priority,10);assert_eq!(p.fifo_write_retries,3);assert_eq!(p.fifo_write_wait_ms,1);assert_eq!(p.fifo_reconnect_ms,25);
  }
 
  #[test]
