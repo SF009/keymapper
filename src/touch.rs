@@ -38,15 +38,24 @@ struct E{
 struct Pipe{
     p:String,
     f:Option<std::fs::File>,
+    next_connect:std::time::Instant,
 }
 impl Pipe{
-    fn new(p:String)->Self{Self{p,f:None}}
+    fn new(p:String)->Self{Self{p,f:None,next_connect:std::time::Instant::now()}}
     fn connect(&mut self)->io::Result<()>{
         if self.f.is_some(){return Ok(())}
+        let now=std::time::Instant::now();
+        if now<self.next_connect{
+            return Err(io::Error::new(io::ErrorKind::WouldBlock,"FIFO reconnect backoff"));
+        }
         let c=std::ffi::CString::new(self.p.as_str()).map_err(|_|io::Error::new(io::ErrorKind::InvalidInput,"invalid FIFO path"))?;
         let fd=unsafe{libc::open(c.as_ptr(),libc::O_WRONLY|libc::O_NONBLOCK|libc::O_CLOEXEC)};
-        if fd<0{return Err(io::Error::last_os_error())}
+        if fd<0{
+            self.next_connect=now+std::time::Duration::from_millis(25);
+            return Err(io::Error::last_os_error())
+        }
         self.f=Some(unsafe{std::fs::File::from_raw_fd(fd)});
+        self.next_connect=now;
         Ok(())
     }
     fn send(&mut self,es:&[(u16,u16,i32)]){
@@ -70,7 +79,7 @@ impl Pipe{
                 let b=unsafe{std::slice::from_raw_parts((&e as*const E)as*const u8,size)};
                 v.extend_from_slice(b);
             }
-            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>self.f=None,}
+            match pipe_write_bounded(f.as_raw_fd(),&v){Ok(())=>{},Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{},Err(_)=>{self.f=None;self.next_connect=std::time::Instant::now()+std::time::Duration::from_millis(25);},}
             return;
         }
 
