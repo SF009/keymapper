@@ -894,6 +894,16 @@ fn install_runtime()->Result<(),String>{
         if exe.is_file(){install_user_executable(&exe,&gui_install_path())?;}
     }
 
+    if !active_config_path().is_file(){
+        let seed=profiles_dir().join("default.toml");
+        if seed.is_file(){
+            if let Some(parent)=active_config_path().parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
+            let tmp=active_config_path().with_extension("toml.tmp");
+            fs::copy(&seed,&tmp).map_err(|e|format!("seed active config: {e}"))?;
+            fs::rename(&tmp,active_config_path()).map_err(|e|format!("activate default config: {e}"))?;
+        }
+    }
+
     if let Some(parent)=desktop_file_path().parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
     let desktop=desktop_file_path();
     let desktop_tmp=desktop.with_extension("desktop.tmp");
@@ -949,7 +959,12 @@ fn runtime_service_state()->String{
     let out=Command::new("systemctl").args(["--user","is-active",USER_SERVICE]).output();
     match out{
         Ok(o) if o.status.success()=>"Running".into(),
-        Ok(_)=>if user_service_dir().join(USER_SERVICE).is_file(){"Stopped".into()}else{"Not installed".into()},
+        Ok(_)=>{
+            let failed=Command::new("systemctl").args(["--user","is-failed",USER_SERVICE]).output();
+            if matches!(failed,Ok(ref x) if x.status.success()){"Failed".into()}
+            else if user_service_dir().join(USER_SERVICE).is_file(){"Stopped".into()}
+            else{"Not installed".into()}
+        }
         Err(_)=>"systemctl unavailable".into(),
     }
 }
