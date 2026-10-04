@@ -874,36 +874,49 @@ fn install_runtime()->Result<(),String>{
     Ok(())
 }
 
-fn service_action(action:&str)->Result<String,String>{
-    if action=="stop"{
-        let out=Command::new("systemctl").args(["--user","stop",USER_SERVICE]).output().map_err(|e|e.to_string())?;
-        if out.status.success(){return Ok(String::new())}
+fn systemctl_user(args:&[&str])->Result<String,String>{
+    let out=Command::new("systemctl").args(["--user"]).args(args).output().map_err(|e|e.to_string())?;
+    if out.status.success(){Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
+    else{
         let err=String::from_utf8_lossy(&out.stderr).trim().to_string();
-        if err.contains("not loaded") || err.contains("not found"){return Ok(String::new())}
-        return Err(err)
+        Err(if err.is_empty(){String::from_utf8_lossy(&out.stdout).trim().to_string()}else{err})
     }
+}
 
-    install_runtime()?;
-
-    if action=="start"{
-        let args=["--user","enable","--now",USER_SERVICE];
-        let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
-        if out.status.success(){return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+fn service_action(action:&str)->Result<String,String>{
+    match action{
+        "stop"=>{
+            match systemctl_user(&["stop",USER_SERVICE]){
+                Ok(x)=>Ok(x),
+                Err(e) if e.contains("not loaded") || e.contains("not found")=>Ok(String::new()),
+                Err(e)=>Err(e),
+            }
+        }
+        "start"=>{
+            install_runtime()?;
+            systemctl_user(&["start",USER_SERVICE])
+        }
+        "restart"=>{
+            install_runtime()?;
+            match systemctl_user(&["restart",USER_SERVICE]){
+                Ok(x)=>Ok(x),
+                Err(e) if e.contains("not loaded") || e.contains("not found")=>systemctl_user(&["start",USER_SERVICE]),
+                Err(e)=>Err(e),
+            }
+        }
+        "enable"=>{
+            install_runtime()?;
+            systemctl_user(&["enable",USER_SERVICE])
+        }
+        "disable"=>{
+            match systemctl_user(&["disable","--now",USER_SERVICE]){
+                Ok(x)=>Ok(x),
+                Err(e) if e.contains("not loaded") || e.contains("not found")=>Ok(String::new()),
+                Err(e)=>Err(e),
+            }
+        }
+        _=>Err("unknown service action".into()),
     }
-
-    if action=="restart"{
-        let active=Command::new("systemctl").args(["--user","is-active",USER_SERVICE]).output();
-        let args=match active{
-            Ok(o) if o.status.success()=>vec!["--user","restart",USER_SERVICE],
-            _=>vec!["--user","enable","--now",USER_SERVICE],
-        };
-        let out=Command::new("systemctl").args(args).output().map_err(|e|e.to_string())?;
-        if out.status.success(){return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())}
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-
-    Err("unknown service action".into())
 }
 
 fn runtime_service_state()->String{
@@ -1275,8 +1288,12 @@ fn build_ui(app:&Application){
     let start_btn=Button::with_label("Start");
     let stop_btn=Button::with_label("Stop");
     let restart_btn=Button::with_label("Restart");
+    let enable_btn=Button::with_label("Enable at login");
+    let disable_btn=Button::with_label("Disable at login");
     let diagnostics_btn=Button::with_label("🔍 Diagnostics");
     rb1.append(&install_btn);rb1.append(&start_btn);rb1.append(&stop_btn);rb1.append(&restart_btn);runtime.append(&rb1);
+    let rb0=GtkBox::new(Orientation::Horizontal,5);
+    rb0.append(&enable_btn);rb0.append(&disable_btn);runtime.append(&rb0);
     runtime.append(&diagnostics_btn);
     let rb2=GtkBox::new(Orientation::Horizontal,5);
     let lock_btn=Button::with_label("🔒 Lock");
@@ -1375,6 +1392,14 @@ fn build_ui(app:&Application){
 
     attach_key_capture(&mouse_toggle,&capture_toggle,&status);
 
+    let ui2=ui.clone();enable_btn.connect_clicked(move |_|{
+        match service_action("enable"){Ok(_)=>set_status(&ui2,"Daemon autostart enabled ✓"),Err(e)=>set_status(&ui2,&format!("Enable failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
+    let ui2=ui.clone();disable_btn.connect_clicked(move |_|{
+        match service_action("disable"){Ok(_)=>set_status(&ui2,"Daemon autostart disabled"),Err(e)=>set_status(&ui2,&format!("Disable failed: {e}"))}
+        update_runtime_status(&ui2);
+    });
     let ui2=ui.clone();diagnostics_btn.connect_clicked(move |_|diagnostics(&ui2));
 
     let ui2=ui.clone();install_btn.connect_clicked(move |_|{
