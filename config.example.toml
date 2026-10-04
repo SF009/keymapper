@@ -14,6 +14,7 @@ right="D"
 center_x=0.15
 center_y=0.76
 radius=0.085
+normalize_diagonal=true
 slot=0
 
 [aim]
@@ -22,7 +23,11 @@ center_x=0.50
 center_y=0.50
 sensitivity=2.0
 slot=1
+invert_x=false
 invert_y=false
+scale_x=1.0
+scale_y=1.0
+edge_margin=0.12
 # touch = compatible absolute aim; relative = unbounded FPS mouse aim
 mode="relative"
 
@@ -47,9 +52,19 @@ slot=4
 [performance]
 grab=true
 realtime=true
+realtime_priority=10
 mouse_lock = false
 # F8 toggles capture: locked -> desktop mouse released, unlocked -> capture again
 mouse_toggle_key="F8"
+# Bounded FIFO tuning; keep defaults for lowest input latency
+fifo_write_retries=3
+fifo_write_wait_ms=1
+fifo_reconnect_ms=25
+
+[touch]
+pressure=80
+major=8
+minor=8
 
 
 [[mouse_holds]]
