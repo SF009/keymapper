@@ -129,6 +129,8 @@ Start Waydroid, then:
 
     waydroid-keymapper run
 
+The daemon always starts with the configured ownership state only; the shipped defaults and GUI presets keep startup mouse lock **off**. A physical Aim button can auto-lock only after a real button press. F8 is the manual lock toggle, and Ctrl+Alt+F12 is the emergency unlock.
+
 The GUI installs and manages the optional user service automatically. The manual service commands below are only a fallback for headless setups.
 
 Optional user service (manual/headless):
@@ -154,7 +156,7 @@ Waydroid's modern hardware composer also has an Android pointer-capture path tha
 - normalized coordinates
 - no screenshots or OCR
 - EVIOCGRAB mouse/keyboard capture when enabled
-- runtime mouse lock toggle: F8 by default; **mouse lock is off by default** so starting the daemon never captures the desktop cursor unexpectedly
+- runtime mouse lock toggle: F8 by default; **mouse lock is off by default** so the shipped profiles do not capture the desktop cursor unexpectedly at startup
 - Aim ownership is explicit: a manual F8 lock survives Aim release, while an Aim-owned lock is released when the Aim button is released
 - unlocked mouse events are drained from the mapper's private evdev queue so the thread cannot busy-spin on permanent POLLIN while GNOME continues receiving its own event stream
 - relative mouse motion is batched per evdev read before being written to Android
