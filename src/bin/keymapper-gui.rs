@@ -1096,6 +1096,14 @@ fn waydroid_state()->String{
 }
 
 fn apply_and_run(ui:&Ui){
+    sync_state_from_form(ui);
+    {
+        let st=ui.state.borrow();
+        if let Err(e)=st.cfg.validate_runtime(){
+            set_status(ui,&format!("Cannot run: {e}"));
+            return
+        }
+    }
     if let Err(e)=save_current(ui){set_status(ui,&format!("Save failed: {e}"));return}
     if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
 
