@@ -4,7 +4,6 @@ use waydroid_keymapper::{
 };
 use waydroid_keymapper::{control,touch::Mapper};
 use std::{env,error::Error,fs,path::PathBuf,sync::{Arc,Mutex},thread,time::Duration};
-use touch::Mapper;
 
 fn print_help(){
  eprintln!("Waydroid Keymapper — low-latency keyboard/mouse mapper");
