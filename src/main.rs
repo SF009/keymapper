@@ -1,10 +1,8 @@
-mod config;
-mod control;
-mod input;
-mod touch;
-
-use config::Config;
-use input::{spawn_input,InputKind,RuntimeControl};
+use keymapper::{
+ config::Config,
+ input::{spawn_input,InputKind,RuntimeControl},
+};
+use keymapper::{control,touch::Mapper};
 use std::{env,error::Error,fs,path::PathBuf,sync::{Arc,Mutex},thread,time::Duration};
 use touch::Mapper;
 
