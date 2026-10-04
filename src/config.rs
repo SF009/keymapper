@@ -87,6 +87,22 @@ impl Config{
   if let Some(msg)=self.conflicts().into_iter().next(){return Err(msg.into())}
   Ok(())
  }
+ pub fn validate_runtime(&self)->Result<(),Box<dyn Error>>{
+  self.validate()?;
+
+  let keyboard_required=self.joystick.is_some()||!self.taps.is_empty()||!self.holds.is_empty();
+  if keyboard_required&&self.devices.keyboard.as_deref().unwrap_or("").is_empty(){
+   return Err("a keyboard device is required for the configured keyboard mappings".into())
+  }
+
+  let mouse_required=self.performance.mouse_lock||self.aim.is_some()||!self.mouse_taps.is_empty()||!self.mouse_holds.is_empty();
+  if mouse_required&&self.devices.mouse.as_deref().unwrap_or("").is_empty(){
+   return Err("a mouse device is required for the configured mouse mappings/lock".into())
+  }
+
+  Ok(())
+ }
+
  pub fn touch_fifo(&self)->String{
   if let Ok(p)=env::var("WAYDROID_TOUCH_FIFO"){return p}
   let c=["/dev/input/wl_touch_events","/var/lib/waydroid/rootfs/dev/input/wl_touch_events","/opt/waydroid/rootfs/dev/input/wl_touch_events"];
@@ -161,6 +177,27 @@ mod tests{
   c.performance.mouse_lock=true;
   c.performance.grab=false;
   assert!(c.validate().is_err());
+ }
+
+ #[test]
+ fn runtime_validation_requires_devices_for_active_mappings(){
+  let mut c=base();
+  c.joystick=Some(Joystick{
+   up:"W".into(),down:"S".into(),left:"A".into(),right:"D".into(),
+   center_x:0.15,center_y:0.76,radius:0.085,slot:0,
+  });
+  assert!(c.validate().is_ok());
+  assert!(c.validate_runtime().is_err());
+
+  c.devices.keyboard=Some("/dev/input/event0".into());
+  c.aim=Some(Aim{
+   button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,sensitivity:2.,
+   slot:1,invert_y:false,mode:"relative".into(),
+  });
+  assert!(c.validate_runtime().is_err());
+
+  c.devices.mouse=Some("/dev/input/event1".into());
+  assert!(c.validate_runtime().is_ok());
  }
 
  #[test]
