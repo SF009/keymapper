@@ -94,7 +94,7 @@ fn shooter_profile(base:&Config)->Config{
     });
     cfg.aim=Some(Aim{
         button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,
-        sensitivity:2.0,slot:1,invert_y:false,mode:"touch".into(),
+        sensitivity:2.0,slot:1,invert_y:false,mode:"relative".into(),
     });
     cfg
 }
