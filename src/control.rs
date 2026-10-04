@@ -59,13 +59,10 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
         }
         "lock"=>{
             let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
-            if !can_grab{
-                "ERR cannot-lock: exclusive input grab is disabled".to_string()
-            }else{
-                control.mouse_locked.store(true,std::sync::atomic::Ordering::Release);
+            if control.set_locked(true,can_grab){
                 control.notify_mouse();
                 "OK requested=lock".to_string()
-            }
+            }else{"ERR cannot-lock: exclusive input grab is disabled".to_string()}
         }
         "unlock"=>{
             control.mouse_locked.store(false,std::sync::atomic::Ordering::Release);
@@ -74,24 +71,9 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
         }
         "toggle"=>{
             let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
-            if !can_grab && !control.mouse_locked.load(std::sync::atomic::Ordering::Acquire){
-                "ERR cannot-lock: exclusive input grab is disabled".to_string()
-            }else{
-                let mut current=control.mouse_locked.load(std::sync::atomic::Ordering::Acquire);
-                loop{
-                    let next=!current;
-                    match control.mouse_locked.compare_exchange(
-                        current,next,
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Acquire,
-                    ){
-                        Ok(_)=>{
-                            control.notify_mouse();
-                            break format!("OK requested={}",if next{"lock"}else{"unlock"});
-                        }
-                        Err(actual)=>current=actual,
-                    }
-                }
+            match control.toggle(can_grab){
+                Some(next)=>{control.notify_mouse();format!("OK requested={}",if next{"lock"}else{"unlock"})}
+                None=>"ERR cannot-lock: exclusive input grab is disabled".to_string(),
             }
         }
         "ping"=>"OK pong".to_string(),
