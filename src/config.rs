@@ -224,4 +224,22 @@ mod tests{
   c.mouse_holds.push(MouseHold{button:"MOUSE_LEFT".into(),x:0.9,y:0.8,slot:3});
   assert!(c.validate().is_ok());
  }
+
+ #[test]
+ fn legacy_aim_fields_get_safe_defaults(){
+  let a:Aim=toml::from_str("button=\"MOUSE_RIGHT\"\ncenter_x=0.5\ncenter_y=0.5\nsensitivity=2.0\nmode=\"relative\"\n").unwrap();
+  assert!(!a.invert_x&&!a.invert_y);
+  assert_eq!(a.scale_x,1.0);assert_eq!(a.scale_y,1.0);assert_eq!(a.edge_margin,0.12);
+ }
+
+ #[test]
+ fn legacy_config_gets_new_defaults(){
+  let c:Config=toml::from_str("[display]\nwidth=1920\nheight=1080\n[devices]\nkeyboard=\"/dev/input/event0\"\nmouse=\"/dev/input/event1\"\n").unwrap();
+  assert!(c.joystick.is_none()&&c.aim.is_none());
+  assert_eq!(c.performance.realtime_priority,10);
+  assert_eq!(c.performance.fifo_write_retries,3);
+  assert_eq!(c.performance.fifo_write_wait_ms,1);
+  assert_eq!(c.performance.fifo_reconnect_ms,25);
+  assert_eq!(c.touch.pressure,80);assert_eq!(c.touch.major,8);assert_eq!(c.touch.minor,8);
+ }
 }
