@@ -5,137 +5,144 @@ use std::{
     io,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     sync::{
-        atomic::{AtomicBool,AtomicU8,Ordering},
-        Arc,Mutex,
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        Arc, Mutex,
     },
     thread,
+    time::Duration,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum InputKind {
     Keyboard,
     Mouse,
 }
 
-const LOCK_NONE:u8=0;
-const LOCK_MANUAL:u8=1;
-const LOCK_AIM:u8=2;
+const LOCK_NONE: u8 = 0;
+const LOCK_MANUAL: u8 = 1;
+const LOCK_AIM: u8 = 2;
 
-pub struct RuntimeControl{
-    pub mouse_locked:AtomicBool,
-    lock_owner:AtomicU8,
-    mouse_event:OwnedFd,
+pub struct RuntimeControl {
+    pub mouse_locked: AtomicBool,
+    lock_owner: AtomicU8,
+    mouse_event: OwnedFd,
+    keyboard_event: OwnedFd,
 }
-impl RuntimeControl{
-    pub fn new(locked:bool)->io::Result<Arc<Self>>{
-        let fd=unsafe{libc::eventfd(0,libc::EFD_CLOEXEC|libc::EFD_NONBLOCK)};
-        if fd<0{return Err(io::Error::last_os_error())}
-        Ok(Arc::new(Self{
-            mouse_locked:AtomicBool::new(locked),
-            lock_owner:AtomicU8::new(if locked{LOCK_MANUAL}else{LOCK_NONE}),
-            mouse_event:unsafe{OwnedFd::from_raw_fd(fd)},
+
+impl RuntimeControl {
+    pub fn new(locked: bool) -> io::Result<Arc<Self>> {
+        let mouse_fd = create_event_fd()?;
+        let keyboard_fd = create_event_fd()?;
+
+        Ok(Arc::new(Self {
+            mouse_locked: AtomicBool::new(locked),
+            lock_owner: AtomicU8::new(if locked { LOCK_MANUAL } else { LOCK_NONE }),
+            mouse_event: mouse_fd,
+            keyboard_event: keyboard_fd,
         }))
     }
 
-    /// F8/control-socket lock is an explicit manual owner. It overrides an
-    /// aim-owned lock and therefore always has deterministic unlock semantics.
-    pub fn set_locked(&self,locked:bool,allow_lock:bool)->bool{
-        if locked&&!allow_lock{return false}
-        self.lock_owner.store(if locked{LOCK_MANUAL}else{LOCK_NONE},Ordering::Release);
-        self.mouse_locked.store(locked,Ordering::Release);
+    pub fn set_locked(&self, locked: bool, allow_lock: bool) -> bool {
+        if locked && !allow_lock {
+            return false;
+        }
+
+        self.lock_owner.store(
+            if locked { LOCK_MANUAL } else { LOCK_NONE },
+            Ordering::Release,
+        );
+        self.mouse_locked.store(locked, Ordering::Release);
+        self.notify_all();
         true
     }
 
-    pub fn force_unlock(&self){
-        self.lock_owner.store(LOCK_NONE,Ordering::Release);
-        self.mouse_locked.store(false,Ordering::Release);
-        self.notify_mouse();
+    pub fn force_unlock(&self) {
+        self.lock_owner.store(LOCK_NONE, Ordering::Release);
+        self.mouse_locked.store(false, Ordering::Release);
+        self.notify_all();
     }
 
-    pub fn toggle(&self,allow_lock:bool)->Option<bool>{
-        let current=self.mouse_locked.load(Ordering::Acquire);
-        if current{
-            self.set_locked(false,allow_lock);
-            return Some(false);
+    pub fn toggle(&self, allow_lock: bool) -> Option<bool> {
+        if self.mouse_locked.load(Ordering::Acquire) {
+            self.set_locked(false, allow_lock);
+            Some(false)
+        } else if allow_lock {
+            self.set_locked(true, true);
+            Some(true)
+        } else {
+            None
         }
-        if !allow_lock{return None}
-        self.set_locked(true,true);
-        Some(true)
     }
 
-    /// Claim the physical pointer for the Aim state only when no manual lock
-    /// owns it. This mirrors Waydroid Helper's explicit input ownership model.
-    pub fn request_aim_lock(&self,allow_lock:bool)->bool{
-        if !allow_lock{return false}
-        if self.lock_owner.compare_exchange(
-            LOCK_NONE,LOCK_AIM,Ordering::AcqRel,Ordering::Acquire
-        ).is_ok(){
-            self.mouse_locked.store(true,Ordering::Release);
-            self.notify_mouse();
-            return true;
+    pub fn request_aim_lock(&self, allow_lock: bool) -> bool {
+        if !allow_lock {
+            return false;
         }
-        false
-    }
 
-    /// Release only an Aim-owned lock. A manual F8 lock survives Aim release.
-    pub fn release_aim_lock(&self)->bool{
-        if self.lock_owner.compare_exchange(
-            LOCK_AIM,LOCK_NONE,Ordering::AcqRel,Ordering::Acquire
-        ).is_ok(){
-            self.mouse_locked.store(false,Ordering::Release);
-            self.notify_mouse();
+        if self
+            .lock_owner
+            .compare_exchange(
+                LOCK_NONE,
+                LOCK_AIM,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            self.mouse_locked.store(true, Ordering::Release);
+            self.notify_all();
             true
-        }else{
-            // Ownership was transferred to another owner (for example a manual
-            // F8 lock) while Aim was active. The new owner must keep the grab.
+        } else {
             false
         }
     }
 
-    pub fn owner_name(&self)->&'static str{
-        match self.lock_owner.load(Ordering::Acquire){
-            LOCK_MANUAL=>"manual",
-            LOCK_AIM=>"aim",
-            _=>"none",
+    pub fn release_aim_lock(&self) -> bool {
+        if self
+            .lock_owner
+            .compare_exchange(
+                LOCK_AIM,
+                LOCK_NONE,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            self.mouse_locked.store(false, Ordering::Release);
+            self.notify_all();
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn owner_name(&self) -> &'static str {
+        match self.lock_owner.load(Ordering::Acquire) {
+            LOCK_MANUAL => "manual",
+            LOCK_AIM => "aim",
+            _ => "none",
+        }
+    }
+
+    pub fn notify_mouse(&self) {
+        write_eventfd(&self.mouse_event);
+    }
+
+    pub fn notify_keyboard(&self) {
+        write_eventfd(&self.keyboard_event);
     }
 
     pub fn notify_all(&self) {
-        let value: libc::c_ulonglong = 1;
-        unsafe {
-            let _ = libc::write(
-                self.mouse_event.as_raw_fd(),
-                (&value as *const libc::c_ulonglong).cast::<libc::c_void>(),
-                std::mem::size_of::<libc::c_ulonglong>(),
-            );
-            let _ = libc::write(
-                self.keyboard_event.as_raw_fd(),
-                (&value as *const libc::c_ulonglong).cast::<libc::c_void>(),
-                std::mem::size_of::<libc::c_ulonglong>(),
-            );
-        }
+        self.notify_mouse();
+        self.notify_keyboard();
     }
 
     pub fn drain_mouse_notifications(&self) {
-        let mut value: libc::c_ulonglong = 0;
-        unsafe {
-            let _ = libc::read(
-                self.mouse_event.as_raw_fd(),
-                (&mut value as *mut libc::c_ulonglong).cast::<libc::c_void>(),
-                std::mem::size_of::<libc::c_ulonglong>(),
-            );
-        }
+        drain_eventfd(&self.mouse_event);
     }
 
     pub fn drain_keyboard_notifications(&self) {
-        let mut value: libc::c_ulonglong = 0;
-        unsafe {
-            let _ = libc::read(
-                self.keyboard_event.as_raw_fd(),
-                (&mut value as *mut libc::c_ulonglong).cast::<libc::c_void>(),
-                std::mem::size_of::<libc::c_ulonglong>(),
-            );
-        }
+        drain_eventfd(&self.keyboard_event);
     }
 
     pub fn mouse_event_fd(&self) -> i32 {
@@ -147,10 +154,48 @@ impl RuntimeControl{
     }
 }
 
+fn create_event_fd() -> io::Result<OwnedFd> {
+    let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+}
+
+fn write_eventfd(fd: &OwnedFd) {
+    let value: libc::eventfd_t = 1;
+    let rc = unsafe {
+        libc::write(
+            fd.as_raw_fd(),
+            (&value as *const libc::eventfd_t).cast::<libc::c_void>(),
+            std::mem::size_of::<libc::eventfd_t>(),
+        )
+    };
+    if rc < 0 {
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::WouldBlock {
+            eprintln!("waydroid-keymapper: event notification failed: {err}");
+        }
+    }
+}
+
+fn drain_eventfd(fd: &OwnedFd) {
+    let mut value: libc::eventfd_t = 0;
+    let _ = unsafe {
+        libc::read(
+            fd.as_raw_fd(),
+            (&mut value as *mut libc::eventfd_t).cast::<libc::c_void>(),
+            std::mem::size_of::<libc::eventfd_t>(),
+        )
+    };
+}
+
 fn best_effort_realtime(enabled: bool, priority: i32, thread_name: &str) {
     if !enabled {
         return;
     }
+
     let mut param = libc::sched_param {
         sched_priority: priority,
     };
@@ -176,17 +221,14 @@ fn keyboard_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeC
 
     let _ = d.set_nonblocking(true);
 
-    let (grab, realtime, toggle) = match mapper.lock() {
+    let (grab, realtime, toggle, priority) = match mapper.lock() {
         Ok(m) => (
             m.config().performance.grab,
             m.config().performance.realtime,
             key_code(&m.config().performance.mouse_toggle_key).ok(),
+            m.config().performance.realtime_priority,
         ),
         Err(_) => return,
-    };
-    let priority = match mapper.lock() {
-        Ok(m) => m.config().performance.realtime_priority,
-        Err(_) => 10,
     };
     best_effort_realtime(realtime, priority, "wd-keyboard");
 
@@ -194,6 +236,8 @@ fn keyboard_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeC
     if grab && locked {
         if let Err(e) = d.grab() {
             eprintln!("waydroid-keymapper: initial keyboard grab failed for {path}: {e}");
+            control.force_unlock();
+            locked = false;
         }
     }
 
@@ -224,12 +268,11 @@ fn keyboard_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeC
 
         let rc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
         if rc < 0 {
-            if control::shutdown_requested() {
-                break;
-            }
-            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
+            eprintln!("waydroid-keymapper: keyboard poll failed: {err}");
             let _ = d.ungrab();
             if let Ok(mut m) = mapper.lock() {
                 m.reset_keyboard_state();
@@ -237,19 +280,24 @@ fn keyboard_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeC
             return;
         }
 
-        // Handle lock/unlock state notifications
         if fds[0].revents & (libc::POLLIN | libc::POLLERR) != 0 {
             control.drain_keyboard_notifications();
             let desired = control.mouse_locked.load(Ordering::Acquire);
+
             if desired != locked {
                 if grab {
-                    if desired {
-                        let _ = d.grab();
+                    let result = if desired { d.grab() } else { d.ungrab() };
+                    if let Err(e) = result {
+                        eprintln!("waydroid-keymapper: keyboard grab transition failed: {e}");
+                        control.force_unlock();
+                        locked = false;
                     } else {
-                        let _ = d.ungrab();
+                        locked = desired;
                     }
+                } else {
+                    locked = desired;
                 }
-                locked = desired;
+
                 if !locked {
                     if let Ok(mut m) = mapper.lock() {
                         m.reset_keyboard_state();
@@ -266,72 +314,69 @@ fn keyboard_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeC
             return;
         }
 
-        if fds[1].revents & libc::POLLIN != 0 {
-            let fetched = d.fetch_events().map(|events| events.collect::<Vec<_>>());
-            match fetched {
-                Ok(events) => {
-                    let mut m = match mapper.lock() {
-                        Ok(x) => x,
-                        Err(_) => return,
-                    };
-                    for e in events {
-                        if let EventSummary::Key(_, c, v) = e.destructure() {
-                            let code = c.0;
-                            if code == KeyCode::KEY_LEFTCTRL.0 || code == KeyCode::KEY_RIGHTCTRL.0 {
-                                ctrl_down = v != 0;
-                            }
-                            if code == KeyCode::KEY_LEFTALT.0 || code == KeyCode::KEY_RIGHTALT.0 {
-                                alt_down = v != 0;
-                            }
+        if fds[1].revents & libc::POLLIN == 0 {
+            continue;
+        }
 
-                            // Emergency unlock: Ctrl+Alt+F12
-                            if code == KeyCode::KEY_F12.0 && v == 1 && ctrl_down && alt_down {
-                                control.force_unlock();
-                                if grab {
-                                    let _ = d.ungrab();
-                                }
-                                locked = false;
-                                m.set_mouse_lock(false);
-                                m.reset_keyboard_state();
-                                continue;
-                            }
-
-                            // Toggle key (e.g. F8)
-                            if Some(code) == toggle && v == 1 {
-                                let can_grab = m.config().performance.grab;
-                                if let Some(next) = control.toggle(can_grab) {
-                                    if grab {
-                                        if next {
-                                            let _ = d.grab();
-                                        } else {
-                                            let _ = d.ungrab();
-                                        }
-                                    }
-                                    locked = next;
-                                    if !locked {
-                                        m.reset_keyboard_state();
-                                    }
-                                }
-                                continue;
-                            }
-
-                            // When in game (locked), map keys to Waydroid
-                            if locked {
-                                m.key(code, v);
-                            }
-                        }
-                    }
+        let events_result = d.fetch_events().map(|events| events.collect::<Vec<_>>());
+        let events = match events_result {
+            Ok(events) => events,
+            Err(e) => {
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    continue;
                 }
-                Err(e) => {
-                    if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) {
-                        continue;
-                    }
-                    let _ = d.ungrab();
-                    if let Ok(mut m) = mapper.lock() {
+                eprintln!("waydroid-keymapper: keyboard read failed: {e}");
+                let _ = d.ungrab();
+                if let Ok(mut m) = mapper.lock() {
+                    m.reset_keyboard_state();
+                }
+                return;
+            }
+        };
+
+        let mut m = match mapper.lock() {
+            Ok(x) => x,
+            Err(_) => return,
+        };
+
+        for e in events {
+            let EventSummary::Key(_, c, v) = e.destructure() else {
+                continue;
+            };
+
+            let code = c.0;
+            if code == KeyCode::KEY_LEFTCTRL.0 || code == KeyCode::KEY_RIGHTCTRL.0 {
+                ctrl_down = v != 0;
+            }
+            if code == KeyCode::KEY_LEFTALT.0 || code == KeyCode::KEY_RIGHTALT.0 {
+                alt_down = v != 0;
+            }
+
+            if code == KeyCode::KEY_F12.0 && v == 1 && ctrl_down && alt_down {
+                control.force_unlock();
+                locked = false;
+                m.set_mouse_lock(false);
+                m.reset_keyboard_state();
+                let _ = d.ungrab();
+                continue;
+            }
+
+            if Some(code) == toggle && v == 1 {
+                let can_grab = m.config().performance.grab;
+                if let Some(next) = control.toggle(can_grab) {
+                    locked = next;
+                    if !locked {
                         m.reset_keyboard_state();
                     }
-                    return;
                 }
+                continue;
+            }
+
+            if locked {
+                m.key(code, v);
             }
         }
     }
@@ -343,189 +388,239 @@ fn flush_pending_mouse_events(d: &mut Device) {
             Ok(events) => {
                 let _ = events.count();
             }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
-            {
-                if e.kind() == io::ErrorKind::WouldBlock {
-                    break;
-                }
-            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
 }
 
 fn apply_mouse_lock(
-    d:&mut Device,
-    desired:bool,
-    grab:bool,
-    discard_queued:bool,
-    mapper:&Arc<Mutex<Mapper>>,
-    control:&Arc<RuntimeControl>,
-)->bool{
-    if desired{
-        if !grab{
+    d: &mut Device,
+    desired: bool,
+    grab: bool,
+    discard_queued: bool,
+    mapper: &Arc<Mutex<Mapper>>,
+    control: &Arc<RuntimeControl>,
+) -> bool {
+    if desired {
+        if !grab {
             control.force_unlock();
-            if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+            if let Ok(mut m) = mapper.lock() {
+                m.set_mouse_lock(false);
+            }
             return false;
         }
-        match d.grab(){
-            Ok(())=>{
-                if discard_queued{flush_pending_mouse_events(d);}
-                if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(true);}
+
+        match d.grab() {
+            Ok(()) => {
+                if discard_queued {
+                    flush_pending_mouse_events(d);
+                }
+                if let Ok(mut m) = mapper.lock() {
+                    m.set_mouse_lock(true);
+                }
                 true
             }
-            Err(e)=>{
+            Err(e) => {
                 eprintln!("waydroid-keymapper: mouse grab failed: {e}");
                 control.force_unlock();
-                if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+                if let Ok(mut m) = mapper.lock() {
+                    m.set_mouse_lock(false);
+                }
                 false
             }
         }
-    }else{
-        let _=d.ungrab();
-        if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+    } else {
+        let _ = d.ungrab();
+        if let Ok(mut m) = mapper.lock() {
+            m.set_mouse_lock(false);
+        }
         true
     }
 }
 
-fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>){
-    let mut d=match Device::open(path){
-        Ok(x)=>x,
-        Err(e)=>{eprintln!("waydroid-keymapper: open mouse {path}: {e}");return}
+fn mouse_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeControl>) {
+    let mut d = match Device::open(path) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("waydroid-keymapper: open mouse {path}: {e}");
+            return;
+        }
     };
 
-    if d.set_nonblocking(true).is_err() {
-        eprintln!("waydroid-keymapper: failed to set nonblocking mouse input for {path}");
+    if let Err(e) = d.set_nonblocking(true) {
+        eprintln!("waydroid-keymapper: nonblocking mouse input failed for {path}: {e}");
         return;
     }
 
-    let (grab,realtime,auto_lock_on_aim,aim_button)=match mapper.lock(){
-        Ok(m)=>(
+    let (grab, realtime, auto_lock_on_aim, aim_button, priority) = match mapper.lock() {
+        Ok(m) => (
             m.config().performance.grab,
             m.config().performance.realtime,
             m.config().performance.auto_lock_on_aim,
-            m.config().aim.as_ref().and_then(|a|button_code(&a.button).ok()),
+            m.config()
+                .aim
+                .as_ref()
+                .filter(|a| !a.is_continuous())
+                .and_then(|a| button_code(&a.button).ok()),
+            m.config().performance.realtime_priority,
         ),
-        Err(_)=>return,
+        Err(_) => return,
     };
-    let priority=match mapper.lock(){Ok(m)=>m.config().performance.realtime_priority,Err(_)=>10};
-    best_effort_realtime(realtime,priority,"wd-mouse");
+    best_effort_realtime(realtime, priority, "wd-mouse");
 
-    let mut locked=control.mouse_locked.load(Ordering::Acquire);
-    if locked{
-        locked=apply_mouse_lock(&mut d,true,grab,true,mapper,control);
-    }else if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+    let mut locked = false;
+    if control.mouse_locked.load(Ordering::Acquire) {
+        locked = apply_mouse_lock(&mut d, true, grab, true, mapper, control);
+    } else if let Ok(mut m) = mapper.lock() {
+        m.set_mouse_lock(false);
+    }
 
-    loop{
-        if control::shutdown_requested(){
-            let _=d.ungrab();
-            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+    loop {
+        if control::shutdown_requested() {
+            let _ = d.ungrab();
+            if let Ok(mut m) = mapper.lock() {
+                m.reset_mouse_state();
+            }
             control.force_unlock();
-            break
+            break;
         }
 
-        let mut fds=[
-            libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
-            libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
+        let mut fds = [
+            libc::pollfd {
+                fd: control.mouse_event_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: d.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
-        let nfds = if locked { 2 } else { 1 };
 
-        let rc=unsafe{libc::poll(fds.as_mut_ptr(),fds.len() as libc::nfds_t,-1)};
-        if rc<0{
-            if control::shutdown_requested(){break}
-            if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
-            let _=d.ungrab();
-            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+        // We keep the physical mouse fd in the poll set even while unlocked:
+        // there is no polling timer or busy-spin, and it is required to detect
+        // a configured Aim button for optional Helper-style auto-lock.
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        if rc < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            eprintln!("waydroid-keymapper: mouse poll failed: {err}");
+            let _ = d.ungrab();
+            if let Ok(mut m) = mapper.lock() {
+                m.reset_mouse_state();
+            }
             control.force_unlock();
             return;
         }
 
-        if fds[1].revents&(libc::POLLIN|libc::POLLERR)!=0{
-            control.drain_notifications();
-            let desired=control.mouse_locked.load(Ordering::Acquire);
-            if desired!=locked{
-                locked=apply_mouse_lock(&mut d,desired,grab,true,mapper,control);
+        if fds[0].revents & (libc::POLLIN | libc::POLLERR) != 0 {
+            control.drain_mouse_notifications();
+            let desired = control.mouse_locked.load(Ordering::Acquire);
+            if desired != locked {
+                locked = apply_mouse_lock(&mut d, desired, grab, true, mapper, control);
             }
         }
 
-        if fds[0].revents&(libc::POLLERR|libc::POLLHUP|libc::POLLNVAL)!=0{
-            let _=d.ungrab();
-            if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+        if fds[1].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+            let _ = d.ungrab();
+            if let Ok(mut m) = mapper.lock() {
+                m.reset_mouse_state();
+            }
             control.force_unlock();
             return;
         }
 
-        if fds[0].revents&libc::POLLIN!=0{
-            let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
-            match fetched{
-                Ok(events)=>{
-                    // Keep one Android relative-motion transaction per evdev
-                    // batch. Motion that arrived before an Aim grab is never
-                    // replayed into the newly captured camera.
-                    let mut dx=0i32;
-                    let mut dy=0i32;
-                    for e in events{
-                        match e.destructure(){
-                            EventSummary::RelativeAxis(_,c,v)=>{
-                                if locked{
-                                    if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
-                                    else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
-                                }
-                            }
-                            EventSummary::Key(_,c,v)=>{
-                                if locked&&(dx!=0||dy!=0){
-                                    if let Ok(mut m)=mapper.lock(){m.mouse(dx,dy);}
-                                    dx=0;dy=0;
-                                }
-                                let code=c.0;
-                                let mut process_button=true;
+        if fds[1].revents & libc::POLLIN == 0 {
+            continue;
+        }
 
-                                // Aim acquisition is driven by the physical Aim
-                                // button, not by a separate F8 step.
-                                if Some(code)==aim_button&&v==1&&auto_lock_on_aim{
-                                    if control.request_aim_lock(grab){
-                                        locked=apply_mouse_lock(&mut d,true,grab,false,mapper,control);
-                                        if !locked{process_button=false;}
-                                    }
-                                }
+        let events_result = d.fetch_events().map(|events| events.collect::<Vec<_>>());
+        let events = match events_result {
+            Ok(events) => events,
+            Err(e) => {
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    continue;
+                }
+                eprintln!("waydroid-keymapper: mouse read failed: {e}");
+                let _ = d.ungrab();
+                if let Ok(mut m) = mapper.lock() {
+                    m.reset_mouse_state();
+                }
+                control.force_unlock();
+                return;
+            }
+        };
 
-                                // Ordinary gameplay mouse bindings are suppressed
-                                // while GNOME owns the pointer. The Aim press may
-                                // pass through only as the capture transition.
-                                if process_button && (locked || Some(code)==aim_button){
-                                    if let Ok(mut m)=mapper.lock(){m.button(code,v);}
-                                }
+        let mut dx = 0i32;
+        let mut dy = 0i32;
 
-                                // Mapper state is released first; only then is the
-                                // kernel grab dropped for an Aim-owned lock.
-                                if Some(code)==aim_button&&v==0&&auto_lock_on_aim{
-                                    if control.release_aim_lock(){
-                                        locked=apply_mouse_lock(&mut d,false,grab,false,mapper,control);
-                                    }else{
-                                        locked=control.mouse_locked.load(Ordering::Acquire);
-                                    }
-                                }
-                            }
+        for e in events {
+            match e.destructure() {
+                EventSummary::RelativeAxis(_, c, v) => {
+                    if locked {
+                        if c == RelativeAxisCode::REL_X {
+                            dx = dx.saturating_add(v);
+                        } else if c == RelativeAxisCode::REL_Y {
+                            dy = dy.saturating_add(v);
                         }
-                        if dx != 0 || dy != 0 {
+                    }
+                }
+                EventSummary::Key(_, c, v) => {
+                    if locked && (dx != 0 || dy != 0) {
+                        if let Ok(mut m) = mapper.lock() {
                             m.mouse(dx, dy);
                         }
+                        dx = 0;
+                        dy = 0;
                     }
-                    if locked&&(dx!=0||dy!=0){
-                        if let Ok(mut m)=mapper.lock(){m.mouse(dx,dy);}
+
+                    let code = c.0;
+
+                    // Detect the configured physical Aim button before applying
+                    // ordinary button mappings. Auto-lock is only entered from
+                    // an actual button press; "ALWAYS" never locks at startup.
+                    if Some(code) == aim_button && v == 1 && auto_lock_on_aim && !locked {
+                        if control.request_aim_lock(grab) {
+                            locked = apply_mouse_lock(&mut d, true, grab, true, mapper, control);
+                        }
+                    }
+
+                    if locked {
+                        if let Ok(mut m) = mapper.lock() {
+                            m.button(code, v);
+                        }
+                    } else if Some(code) == aim_button {
+                        // The press/release is not stolen before lock, but the
+                        // mapper still sees the event so an Aim contact can be
+                        // initialized when auto-lock is unavailable.
+                        if let Ok(mut m) = mapper.lock() {
+                            m.button(code, v);
+                        }
+                    }
+
+                    if Some(code) == aim_button && v == 0 && auto_lock_on_aim {
+                        if control.release_aim_lock() {
+                            locked = apply_mouse_lock(&mut d, false, grab, false, mapper, control);
+                        } else {
+                            locked = control.mouse_locked.load(Ordering::Acquire);
+                        }
                     }
                 }
-                Err(e)=>{
-                    if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::Interrupted){continue}
-                    let _=d.ungrab();
-                    if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
-                    control.force_unlock();
-                    return;
-                }
+                _ => {}
+            }
+        }
+
+        if locked && (dx != 0 || dy != 0) {
+            if let Ok(mut m) = mapper.lock() {
+                m.mouse(dx, dy);
             }
         }
     }
@@ -543,18 +638,22 @@ pub fn spawn_input(
                 InputKind::Keyboard => "wd-keyboard",
                 InputKind::Mouse => "wd-mouse",
             }
-            .into(),
+            .to_string(),
         )
         .spawn(move || {
             loop {
                 if control::shutdown_requested() {
                     break;
                 }
+
                 match kind {
                     InputKind::Keyboard => keyboard_loop(&path, &mapper, &control),
                     InputKind::Mouse => mouse_loop(&path, &mapper, &control),
                 }
-                thread::sleep(std::time::Duration::from_millis(250));
+
+                if !control::shutdown_requested() {
+                    thread::sleep(Duration::from_millis(250));
+                }
             }
         })?;
     Ok(())
@@ -587,20 +686,25 @@ fn inspect_device(path: &std::path::Path) -> Option<InputDeviceInfo> {
     let d = Device::open(path).ok()?;
     let keys = d.supported_keys();
     let rel = d.supported_relative_axes();
-    let is_mouse = keys
+
+    let has_mouse_buttons = keys
         .as_ref()
         .map(|k| {
             k.contains(KeyCode::BTN_LEFT)
                 || k.contains(KeyCode::BTN_RIGHT)
                 || k.contains(KeyCode::BTN_MIDDLE)
         })
-        .unwrap_or(false)
-        && rel
-            .as_ref()
-            .map(|a| {
-                a.contains(RelativeAxisCode::REL_X) || a.contains(RelativeAxisCode::REL_Y)
-            })
-            .unwrap_or(false);
+        .unwrap_or(false);
+
+    let has_relative = rel
+        .as_ref()
+        .map(|a| {
+            a.contains(RelativeAxisCode::REL_X) || a.contains(RelativeAxisCode::REL_Y)
+        })
+        .unwrap_or(false);
+
+    let is_mouse = has_mouse_buttons && has_relative;
+
     let is_keyboard = keys
         .as_ref()
         .map(|k| {
@@ -618,6 +722,7 @@ fn inspect_device(path: &std::path::Path) -> Option<InputDeviceInfo> {
     let name = d.name().unwrap_or("input").to_string();
     let lower = name.to_ascii_lowercase();
     let mut score = 0;
+
     if !lower.contains("virtual") {
         score += 40;
     }
@@ -627,6 +732,7 @@ fn inspect_device(path: &std::path::Path) -> Option<InputDeviceInfo> {
     if !lower.contains("keyd") {
         score += 40;
     }
+
     if is_mouse {
         if lower.contains("usb") {
             score += 25;
@@ -638,6 +744,7 @@ fn inspect_device(path: &std::path::Path) -> Option<InputDeviceInfo> {
             score -= 35;
         }
     }
+
     if is_keyboard {
         if lower.contains("at translated") {
             score += 25;
@@ -657,18 +764,19 @@ fn inspect_device(path: &std::path::Path) -> Option<InputDeviceInfo> {
 }
 
 pub fn list_input_devices() -> Vec<InputDeviceInfo> {
-    let mut out = Vec::<InputDeviceInfo>::new();
+    let mut out = Vec::new();
     let mut seen = std::collections::HashSet::<std::path::PathBuf>::new();
 
     if let Ok(dir) = std::fs::read_dir("/dev/input/by-id") {
-        let mut stable: Vec<std::path::PathBuf> = dir.flatten().map(|e| e.path()).collect();
+        let mut stable = dir.flatten().map(|e| e.path()).collect::<Vec<_>>();
         stable.sort();
+
         for p in stable {
             if !p.is_symlink() {
                 continue;
             }
             if let Some(info) = inspect_device(&p) {
-                let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
+                let canonical = p.canonicalize().unwrap_or(p.clone());
                 if seen.insert(canonical) {
                     out.push(info);
                 }
@@ -677,7 +785,7 @@ pub fn list_input_devices() -> Vec<InputDeviceInfo> {
     }
 
     for (path, _) in evdev::enumerate() {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let canonical = path.canonicalize().unwrap_or(path.clone());
         if seen.contains(&canonical) {
             continue;
         }
@@ -808,56 +916,80 @@ pub fn button_code(s: &str) -> Result<u16, Box<dyn Error>> {
     match s.trim().to_ascii_uppercase().as_str() {
         "MOUSE_LEFT" | "LEFT" | "BTN_LEFT" | "MOUSE1" | "LCLICK" => Ok(KeyCode::BTN_LEFT.0),
         "MOUSE_RIGHT" | "RIGHT" | "BTN_RIGHT" | "MOUSE2" | "RCLICK" => Ok(KeyCode::BTN_RIGHT.0),
-        "MOUSE_MIDDLE" | "MIDDLE" | "BTN_MIDDLE" | "MOUSE3" | "MCLICK" => {
-            Ok(KeyCode::BTN_MIDDLE.0)
-        }
+        "MOUSE_MIDDLE" | "MIDDLE" | "BTN_MIDDLE" | "MOUSE3" | "MCLICK" => Ok(KeyCode::BTN_MIDDLE.0),
         "MOUSE_SIDE" | "SIDE" | "MOUSE_4" | "MOUSE4" | "BTN_SIDE" => Ok(KeyCode::BTN_SIDE.0),
         "MOUSE_EXTRA" | "EXTRA" | "MOUSE_5" | "MOUSE5" | "BTN_EXTRA" => Ok(KeyCode::BTN_EXTRA.0),
         "MOUSE_FORWARD" | "FORWARD" | "BTN_FORWARD" => Ok(KeyCode::BTN_FORWARD.0),
         "MOUSE_BACK" | "BACK" | "BTN_BACK" => Ok(KeyCode::BTN_BACK.0),
         "MOUSE_TASK" | "TASK" | "BTN_TASK" => Ok(KeyCode::BTN_TASK.0),
-        _ => Err(format!("unknown button {s}").into()),
+        _ => Err(format!("unknown mouse button {s}").into()),
     }
 }
 
 #[cfg(test)]
-mod runtime_control_tests {
+mod tests {
     use super::*;
 
     #[test]
-    fn toggle_respects_grab_permission() {
+    fn control_starts_unlocked_by_default() {
+        let control = RuntimeControl::new(false).unwrap();
+        assert!(!control.mouse_locked.load(Ordering::Acquire));
+        assert_eq!(control.owner_name(), "none");
+    }
+
+    #[test]
+    fn manual_toggle_obeys_permission() {
         let control = RuntimeControl::new(false).unwrap();
         assert_eq!(control.toggle(false), None);
-        assert!(!control.mouse_locked.load(Ordering::Acquire));
-
         assert_eq!(control.toggle(true), Some(true));
         assert!(control.mouse_locked.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn aim_lock_has_exclusive_ownership(){
-        let control=RuntimeControl::new(false).unwrap();
-        assert_eq!(control.owner_name(),"none");
-        assert!(control.request_aim_lock(true));
-        assert_eq!(control.owner_name(),"aim");
-        assert!(control.mouse_locked.load(Ordering::Acquire));
-        assert!(!control.request_aim_lock(true));
-        let _=control.release_aim_lock();
-        assert_eq!(control.owner_name(),"none");
+        assert_eq!(control.owner_name(), "manual");
+        assert_eq!(control.toggle(true), Some(false));
         assert!(!control.mouse_locked.load(Ordering::Acquire));
-
-        assert_eq!(control.toggle(true),Some(true));
-        assert_eq!(control.owner_name(),"manual");
-        assert!(!control.request_aim_lock(true));
-        assert_eq!(control.toggle(true),Some(false));
-        assert_eq!(control.owner_name(),"none");
     }
 
     #[test]
-    fn emergency_unlock_always_clears_state(){
-        let control=RuntimeControl::new(true).unwrap();
-        assert!(control.mouse_locked.load(Ordering::Acquire));
+    fn aim_lock_is_exclusive() {
+        let control = RuntimeControl::new(false).unwrap();
+        assert!(control.request_aim_lock(true));
+        assert_eq!(control.owner_name(), "aim");
+        assert!(!control.request_aim_lock(true));
+        assert!(control.release_aim_lock());
+        assert_eq!(control.owner_name(), "none");
+    }
+
+    #[test]
+    fn manual_owner_blocks_aim_owner() {
+        let control = RuntimeControl::new(false).unwrap();
+        assert!(control.set_locked(true, true));
+        assert_eq!(control.owner_name(), "manual");
+        assert!(!control.request_aim_lock(true));
+        assert_eq!(control.owner_name(), "manual");
+    }
+
+    #[test]
+    fn force_unlock_clears_owner() {
+        let control = RuntimeControl::new(true).unwrap();
         control.force_unlock();
         assert!(!control.mouse_locked.load(Ordering::Acquire));
+        assert_eq!(control.owner_name(), "none");
+    }
+
+    #[test]
+    fn always_button_is_not_a_physical_button() {
+        assert!(crate::config::Aim {
+            button: "ALWAYS".into(),
+            center_x: 0.5,
+            center_y: 0.5,
+            sensitivity: 1.0,
+            slot: 1,
+            invert_x: false,
+            invert_y: false,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            edge_margin: 0.12,
+            mode: "relative".into(),
+        }
+        .is_continuous());
     }
 }
