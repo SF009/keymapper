@@ -32,7 +32,7 @@ fn main()->Result<(),Box<dyn Error>>{
   return Ok(())
  }
  if cmd=="devices"{
-  for (path,d) in evdev::enumerate(){println!("{}\t{}",path.display(),d.name().unwrap_or("-"));}
+  for d in input::list_input_devices(){println!("{}\t{}",d.path,d.name);}
   return Ok(())
  }
  if !matches!(cmd.as_str(),"run"|"check"){
