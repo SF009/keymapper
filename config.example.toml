@@ -27,6 +27,7 @@ invert_x=false
 invert_y=false
 scale_x=1.0
 scale_y=1.0
+edge_margin=0.12
 # touch = compatible absolute aim; relative = unbounded FPS mouse aim
 mode="relative"
 
