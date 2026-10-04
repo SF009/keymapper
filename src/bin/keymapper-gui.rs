@@ -1050,34 +1050,30 @@ fn waydroid_state()->String{
 }
 
 fn apply_and_run(ui:&Ui){
-    match save_current(ui){
-        Ok(())=>{},
-        Err(e)=>{set_status(ui,&format!("Save failed: {e}"));return}
-    }
+    if let Err(e)=save_current(ui){set_status(ui,&format!("Save failed: {e}"));return}
     if let Err(e)=install_runtime(){set_status(ui,&format!("Runtime setup failed: {e}"));return}
-    match Ok::<(),String>(()){
-        Ok(())=>{
-            let st=ui.state.borrow();
-            let active=active_config_path();
-            let data=match fs::read_to_string(&st.profile_path){Ok(x)=>x,Err(e)=>{set_status(ui,&format!("Read profile failed: {e}"));return}};
-            drop(st);
-            if let Some(parent)=active.parent(){let _=fs::create_dir_all(parent);}
-            let tmp=active.with_extension("toml.tmp");
-            if let Err(e)=fs::write(&tmp,data){set_status(ui,&format!("Write active config failed: {e}"));return}
-            if let Err(e)=fs::rename(&tmp,&active){
-                let _=fs::remove_file(&tmp);
-                set_status(ui,&format!("Activate config failed: {e}"));
-                return
-            }
-            match service_action("restart"){
-                Ok(_)=>set_status(ui,"Profile applied • daemon restarted ✓"),
-                Err(e)=>set_status(ui,&format!("Profile applied; daemon restart failed: {e}")),
-            }
-            rebuild_profiles(ui);
-            update_runtime_status(ui);
-        }
-        Err(e)=>set_status(ui,&format!("Save failed: {e}")),
+
+    let profile_path=ui.state.borrow().profile_path.clone();
+    let active=active_config_path();
+    let data=match fs::read_to_string(&profile_path){
+        Ok(x)=>x,
+        Err(e)=>{set_status(ui,&format!("Read profile failed: {e}"));return}
+    };
+    if let Some(parent)=active.parent(){let _=fs::create_dir_all(parent);}
+    let tmp=active.with_extension("toml.tmp");
+    if let Err(e)=fs::write(&tmp,data){set_status(ui,&format!("Write active config failed: {e}"));return}
+    if let Err(e)=fs::rename(&tmp,&active){
+        let _=fs::remove_file(&tmp);
+        set_status(ui,&format!("Activate config failed: {e}"));
+        return
     }
+
+    match service_action("restart"){
+        Ok(_)=>set_status(ui,"Profile applied • daemon started/restarted ✓"),
+        Err(e)=>set_status(ui,&format!("Profile applied; daemon restart failed: {e}")),
+    }
+    rebuild_profiles(ui);
+    update_runtime_status(ui);
 }
 
 fn rebuild_profiles(ui:&Ui){
