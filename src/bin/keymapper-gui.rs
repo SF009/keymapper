@@ -209,7 +209,7 @@ fn default_config()->Config{
         holds:vec![Hold{key:"F".into(),x:0.78,y:0.84,slot:4}],
         mouse_taps:Vec::new(),
         mouse_holds:vec![MouseHold{button:"MOUSE_LEFT".into(),x:0.88,y:0.78,slot:5}],
-        performance:Performance{grab:true,realtime:true,mouse_lock:true,mouse_toggle_key:"F8".into()},
+        performance:Performance{grab:true,realtime:true,mouse_lock:false,mouse_toggle_key:"F8".into()},
     }
 }
 
