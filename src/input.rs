@@ -488,8 +488,8 @@ mod runtime_control_tests{
     #[test]
     fn toggle_respects_grab_permission(){
         let control=RuntimeControl::new(false).unwrap();
-        assert_eq!(control.toggle(false),Some(false));
         assert_eq!(control.toggle(false),None);
+        assert!(!control.mouse_locked.load(Ordering::Acquire));
 
         assert_eq!(control.toggle(true),Some(true));
         assert!(control.mouse_locked.load(Ordering::Acquire));
