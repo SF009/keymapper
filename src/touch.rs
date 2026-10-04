@@ -402,11 +402,19 @@ impl Mapper{
         let sy=if a.invert_y{-1.}else{1.};
         self.my+=(dy as f32*a.sensitivity*a.scale_y*sy)/self.cfg.display.height as f32;
 
-        // Keep the virtual touch near the center. This remains bounded by the
-        // Android touch protocol; relative mode above is the true unbounded path.
+        // Absolute aim uses the same recenter transaction as Waydroid Helper:
+        // end the old contact, move back to the calibrated center, then start a
+        // fresh contact. A plain MOVE-to-center creates an abrupt camera jump
+        // inside Android's gesture state and is especially visible in shooters.
         let margin=a.edge_margin;
-        if self.mx<margin||self.mx>1.0-margin{self.mx=a.center_x;}
-        if self.my<margin||self.my>1.0-margin{self.my=a.center_y;}
+        let hit_edge=self.mx<margin||self.mx>1.0-margin||self.my<margin||self.my>1.0-margin;
+        if hit_edge{
+            self.up(a.slot);
+            self.mx=a.center_x;
+            self.my=a.center_y;
+            self.down(a.slot,self.mx,self.my);
+            return;
+        }
         self.mv(a.slot,self.mx,self.my);
     }
 
@@ -477,6 +485,24 @@ mod tests{
         assert!(m.is_mouse_locked());
         m.set_mouse_lock(false);
         assert!(!m.is_mouse_locked());
+    }
+
+    #[test]
+    fn absolute_aim_recenters_with_a_fresh_touch_contact(){
+        let mut c=cfg();
+        c.aim=Some(Aim{
+            button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,
+            sensitivity:100.0,slot:1,invert_x:false,invert_y:false,
+            scale_x:20.0,scale_y:20.0,edge_margin:0.12,mode:"touch".into(),
+        });
+        let mut m=Mapper::new(c).unwrap();
+        m.set_mouse_lock(true);
+        m.button(KeyCode::BTN_RIGHT.0,1);
+        assert!(m.slots[1].down);
+        m.mouse(1000,0);
+        assert!((m.mx-0.5).abs()<f32::EPSILON);
+        assert!((m.my-0.5).abs()<f32::EPSILON);
+        assert!(m.slots[1].down);
     }
 
     #[test]
