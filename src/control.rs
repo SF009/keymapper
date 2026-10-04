@@ -78,8 +78,9 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
             }else{"ERR cannot-lock: exclusive input grab is disabled".to_string()}
         }
         "unlock"=>{
-            control.mouse_locked.store(false,std::sync::atomic::Ordering::Release);
-            control.notify_mouse();
+            if control.set_locked(false,true){
+                control.notify_mouse();
+            }
             "OK requested=unlock".to_string()
         }
         "toggle"=>{
