@@ -61,11 +61,6 @@ x = 0.88
 y = 0.78
 slot = 5
 
-[[mouse_taps]]
-button = "MOUSE_RIGHT"
-x = 0.88
-y = 0.58
-slot = 7
 
 [performance]
 grab = true
