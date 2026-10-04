@@ -110,7 +110,7 @@ fn pipe_write_bounded(fd:i32,data:&[u8],retries:u8,wait_ms:u64)->io::Result<()>{
             let err=io::Error::last_os_error();
             match err.raw_os_error(){
                 Some(libc::EINTR)=>continue,
-                Some(libc::EAGAIN)|Some(libc::EWOULDBLOCK)=>{
+                Some(libc::EAGAIN)=>{
                     let mut p=libc::pollfd{fd,events:libc::POLLOUT,revents:0};
                     let rc=unsafe{libc::poll(&mut p,1,wait_ms.min(i32::MAX as u64) as i32)};
                     if rc>0{continue}
