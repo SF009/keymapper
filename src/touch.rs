@@ -65,6 +65,18 @@ impl Pipe{
     }
     fn send(&mut self,es:&[(u16,u16,i32)]){
         if es.is_empty(){return}
+        self.send_with_policy(es,self.write_retries);
+    }
+
+    /// Critical touch transitions (DOWN/UP) deserve a stronger bounded retry
+    /// budget than high-rate relative motion. This avoids stuck Fire/Aim contacts
+    /// when Waydroid's FIFO is briefly saturated while keeping the hot path bounded.
+    fn send_critical(&mut self,es:&[(u16,u16,i32)]){
+        if es.is_empty(){return}
+        self.send_with_policy(es,self.write_retries.max(8));
+    }
+
+    fn send_with_policy(&mut self,es:&[(u16,u16,i32)],retries:u8){
         if self.f.is_none()&&self.connect().is_err(){return}
         let Some(f)=self.f.as_mut()else{return};
 
@@ -287,7 +299,7 @@ impl Mapper{
         ];
         if first{e.push((KEY,BTN_TOUCH,1))}
         e.push((SYN,0,0));
-        self.out_touch(&e);
+        self.touch.send_critical(&e);
     }
 
     fn mv(&mut self,s:u8,x:f32,y:f32){
@@ -307,7 +319,7 @@ impl Mapper{
         let mut e=vec![(ABS,SLOT,s as i32),(ABS,ID,-1),(ABS,PRESS,0)];
         if last{e.push((KEY,BTN_TOUCH,0))}
         e.push((SYN,0,0));
-        self.out_touch(&e);
+        self.touch.send_critical(&e);
     }
 
     pub fn key(&mut self,c:u16,v:i32){
