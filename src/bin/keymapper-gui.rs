@@ -566,6 +566,35 @@ fn attach_key_capture(entry:&Entry,button:&Button,status:&Label){
     entry.add_controller(controller);
 }
 
+fn attach_mouse_capture(entry:&Entry,button:&Button,status:&Label){
+    let armed=Rc::new(Cell::new(false));
+    let a=armed.clone();let e=entry.clone();let s=status.clone();
+    button.connect_clicked(move |_|{
+        a.set(true);
+        e.grab_focus();
+        s.set_text("Click a mouse button to capture…");
+    });
+
+    let controller=GestureClick::new();
+    controller.set_button(0);
+    let a2=armed.clone();let e2=entry.clone();let s2=status.clone();
+    controller.connect_pressed(move |gesture,_,_,_|{
+        if !a2.get(){return}
+        let token=match gesture.current_button(){
+            1=>"MOUSE_LEFT",
+            2=>"MOUSE_MIDDLE",
+            3=>"MOUSE_RIGHT",
+            8=>"MOUSE_SIDE",
+            9=>"MOUSE_EXTRA",
+            _=>return,
+        };
+        e2.set_text(token);
+        a2.set(false);
+        s2.set_text("Mouse button captured");
+    });
+    entry.add_controller(controller);
+}
+
 fn open_add_dialog(ui:&Ui,kind:EditType){
     open_binding_dialog_inner(ui,None,kind);
 }
@@ -623,7 +652,11 @@ fn open_binding_dialog_inner(ui:&Ui,existing:Option<BindingRef>,kind:EditType){
         slot.set_value(2.);
     }
     let status=ui.status.clone();
-    if matches!(kind,EditType::KeyboardTap|EditType::KeyboardHold){attach_key_capture(&key_entry,&capture,&status)}else{capture.set_visible(false);}
+    if matches!(kind,EditType::KeyboardTap|EditType::KeyboardHold){
+        attach_key_capture(&key_entry,&capture,&status);
+    }else{
+        attach_mouse_capture(&key_entry,&capture,&status);
+    }
 
     let ui2=ui.clone();
     dialog.connect_response(move |d,response|{
