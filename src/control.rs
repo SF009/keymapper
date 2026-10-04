@@ -37,8 +37,8 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
     let command=buf.lines().next().unwrap_or_default().trim().to_ascii_lowercase();
     let reply=match command.as_str(){
         "status"=>{
-            let locked=mapper.lock().map(|m|m.is_mouse_locked()).unwrap_or(false);
-            format!("OK running=1 locked={} socket={}",if locked{1}else{0},socket_path().display())
+            let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
+            format!("OK running=1 locked={} grab={} socket={}",if locked{1}else{0},if grab{1}else{0},socket_path().display())
         }
         "lock"=>{
             let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
