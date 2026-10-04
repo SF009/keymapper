@@ -2337,10 +2337,11 @@ fn build_ui(app: &Application) {
         move |area, cr, w, h| draw_canvas(&state, area, cr, w, h)
     });
 
-    let pointer_to_norm = {
+    let pointer_state = state.clone();
+    let pointer_to_norm: Rc<dyn Fn(f64, f64) -> (f32, f32)> = {
         let canvas = canvas.clone();
-        move |x: f64, y: f64| -> (f32, f32) {
-            let st = state.borrow();
+        Rc::new(move |x: f64, y: f64| -> (f32, f32) {
+            let st = pointer_state.borrow();
             let pad = 18.0;
             let cw = (canvas.width() as f64 - 2.0 * pad).max(10.0);
             let ch = (canvas.height() as f64 - 2.0 * pad).max(10.0);
@@ -2354,7 +2355,7 @@ fn build_ui(app: &Application) {
                 ((x - ox) / vw).clamp(0.0, 1.0) as f32,
                 ((y - oy) / vh).clamp(0.0, 1.0) as f32,
             )
-        }
+        })
     };
 
     let click = gtk4::GestureClick::new();
