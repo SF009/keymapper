@@ -1343,7 +1343,7 @@ fn build_ui(app:&Application){
     let joy_up=Entry::new();let joy_down=Entry::new();let joy_left=Entry::new();let joy_right=Entry::new();
     let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);let joy_normalize=CheckButton::with_label("Normalize diagonals");
     let grab=CheckButton::with_label("Exclusive input grab");let realtime=CheckButton::with_label("Realtime preference");
-    let realtime_priority=make_spin(1.,99.,1.,0);let fifo_write_retries=make_spin(1.,16.,1.,0);let fifo_write_wait=make_spin(0.,20.,1.,0);let fifo_reconnect=make_spin(5.,5000.,5.,0);
+    let realtime_priority=make_spin(1.,99.,1.,0);let fifo_write_retries=make_spin(1.,8.,1.,0);let fifo_write_wait=make_spin(0.,5.,1.,0);let fifo_reconnect=make_spin(5.,2000.,5.,0);
     let touch_pressure=make_spin(1.,255.,1.,0);let touch_major=make_spin(1.,255.,1.,0);let touch_minor=make_spin(1.,255.,1.,0);
     let mouse_lock=CheckButton::with_label("Lock mouse on start");
     let mouse_toggle=Entry::new();mouse_toggle.set_text("F8");
