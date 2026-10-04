@@ -318,8 +318,9 @@ fn keyboard_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeC
             continue;
         }
 
-        let events = match d.fetch_events() {
-            Ok(events) => events.collect::<Vec<_>>(),
+        let events_result = d.fetch_events().map(|events| events.collect::<Vec<_>>());
+        let events = match events_result {
+            Ok(events) => events,
             Err(e) => {
                 if matches!(
                     e.kind(),
@@ -538,8 +539,9 @@ fn mouse_loop(path: &str, mapper: &Arc<Mutex<Mapper>>, control: &Arc<RuntimeCont
             continue;
         }
 
-        let events = match d.fetch_events() {
-            Ok(events) => events.collect::<Vec<_>>(),
+        let events_result = d.fetch_events().map(|events| events.collect::<Vec<_>>());
+        let events = match events_result {
+            Ok(events) => events,
             Err(e) => {
                 if matches!(
                     e.kind(),
