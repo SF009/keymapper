@@ -1062,10 +1062,15 @@ fn update_runtime_status(ui:&Ui){
         Ok(reply)=>{
             let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
             let requested=reply.split_whitespace().find_map(|x|x.strip_prefix("requested=")).unwrap_or(locked);
+            let owner=reply.split_whitespace().find_map(|x|x.strip_prefix("owner=")).unwrap_or("none");
             let running=reply.split_whitespace().find_map(|x|x.strip_prefix("running=")).unwrap_or("1");
             if running=="1"{
                 let state=match (requested,locked){
-                    ("1","1")=>"Mouse: 🔒 LOCKED",
+                    ("1","1")=>match owner{
+                        "aim"=>"Mouse: 🎯 AIM LOCKED",
+                        "manual"=>"Mouse: 🔒 MANUAL LOCK",
+                        _=>"Mouse: 🔒 LOCKED",
+                    },
                     ("1","0")=>"Mouse: 🔄 LOCKING…",
                     ("0","1")=>"Mouse: 🔄 UNLOCKING…",
                     _=>"Mouse: 🖱 UNLOCKED",
