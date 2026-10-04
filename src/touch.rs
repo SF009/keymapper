@@ -444,6 +444,16 @@ mod tests{
     }
 
     #[test]
+    fn mapper_starts_unlocked_until_runtime_grabs_mouse(){
+        let mut m=Mapper::new(cfg()).unwrap();
+        assert!(!m.is_mouse_locked());
+        m.set_mouse_lock(true);
+        assert!(m.is_mouse_locked());
+        m.set_mouse_lock(false);
+        assert!(!m.is_mouse_locked());
+    }
+
+    #[test]
     fn keyboard_reset_releases_joystick_and_holds(){
         let mut c=cfg();
         c.joystick=Some(crate::config::Joystick{
