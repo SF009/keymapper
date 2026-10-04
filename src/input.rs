@@ -383,7 +383,6 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                 }
             }
         }
-        }
     }
 }
 
