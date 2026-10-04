@@ -806,22 +806,42 @@ fn desktop_entry()->String{
 }
 
 fn udev_rules_text()->&'static str{
-    "KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\", TAG+=\"uaccess\"\\nSUBSYSTEM==\"input\", KERNEL==\"event*\", MODE=\"0660\", GROUP=\"input\", TAG+=\"uaccess\"\\n"
+    r#"KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", MODE="0660", GROUP="input", TAG+="uaccess"
+"#
 }
 
 fn install_input_permissions()->Result<String,String>{
-    let pkexec=Command::new("pkexec")
-        .args(["sh","-c",&format!(
-            "printf '%s' '{}' > /etc/udev/rules.d/99-waydroid-keymapper.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input",
-            udev_rules_text().replace('\\',"\\\\").replace(''',"'\"'\"'")
-        )])
+    let dir=home_dir().join(".config/waydroid-keymapper");
+    fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+    let tmp=dir.join("99-waydroid-keymapper.rules.tmp");
+    fs::write(&tmp,udev_rules_text()).map_err(|e|format!("write temporary udev rules: {e}"))?;
+
+    let install=Command::new("pkexec")
+        .args(["install","-Dm644",tmp.to_string_lossy().as_ref(),"/etc/udev/rules.d/99-waydroid-keymapper.rules"])
         .output()
         .map_err(|e|format!("pkexec unavailable: {e}"))?;
-    if pkexec.status.success(){Ok("Input permissions repaired ✓ — reconnect/login if the desktop still denies access".into())}
-    else{
-        let err=String::from_utf8_lossy(&pkexec.stderr).trim().to_string();
-        Err(if err.is_empty(){"authentication cancelled or permission repair failed".into()}else{err})
+    if !install.status.success(){
+        let _=fs::remove_file(&tmp);
+        let err=String::from_utf8_lossy(&install.stderr).trim().to_string();
+        return Err(if err.is_empty(){"authentication cancelled or udev rule installation failed".into()}else{err});
     }
+
+    let reload=Command::new("pkexec").args(["udevadm","control","--reload-rules"]).output()
+        .map_err(|e|format!("pkexec udevadm unavailable: {e}"))?;
+    if !reload.status.success(){
+        let _=fs::remove_file(&tmp);
+        return Err(String::from_utf8_lossy(&reload.stderr).trim().to_string());
+    }
+
+    let trigger=Command::new("pkexec").args(["udevadm","trigger","--subsystem-match=input"]).output()
+        .map_err(|e|format!("pkexec udevadm trigger unavailable: {e}"))?;
+    let _=fs::remove_file(&tmp);
+    if !trigger.status.success(){
+        return Err(String::from_utf8_lossy(&trigger.stderr).trim().to_string());
+    }
+
+    Ok("Input permissions repaired ✓".into())
 }
 
 fn daemon_source()->Option<PathBuf>{
