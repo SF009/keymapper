@@ -1,4 +1,4 @@
-use keymapper::{config,input,touch,control};
+use waydroid_keymapper::{config,input,touch,control};
 
 use config::{Aim,Config,Display,Devices,Hold,Joystick,MouseHold,MouseTap,Performance,Tap,TouchSettings};
 use gtk4::prelude::*;
