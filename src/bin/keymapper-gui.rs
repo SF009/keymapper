@@ -991,9 +991,16 @@ fn update_runtime_status(ui:&Ui){
     match control::request("status"){
         Ok(reply)=>{
             let locked=reply.split_whitespace().find_map(|x|x.strip_prefix("locked=")).unwrap_or("0");
+            let requested=reply.split_whitespace().find_map(|x|x.strip_prefix("requested=")).unwrap_or(locked);
             let running=reply.split_whitespace().find_map(|x|x.strip_prefix("running=")).unwrap_or("1");
             if running=="1"{
-                ui.lock_status.set_text(if locked=="1"{"Mouse: 🔒 LOCKED"}else{"Mouse: 🖱 UNLOCKED"});
+                let state=match (requested,locked){
+                    ("1","1")=>"Mouse: 🔒 LOCKED",
+                    ("1","0")=>"Mouse: 🔄 LOCKING…",
+                    ("0","1")=>"Mouse: 🔄 UNLOCKING…",
+                    _=>"Mouse: 🖱 UNLOCKED",
+                };
+                ui.lock_status.set_text(state);
             }else{
                 ui.lock_status.set_text("Mouse: offline");
             }
