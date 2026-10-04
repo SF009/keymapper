@@ -5,7 +5,7 @@ use std::{
     io,
     os::fd::{AsRawFd,FromRawFd,OwnedFd},
     sync::{
-        atomic::{AtomicBool,Ordering},
+        atomic::{AtomicBool,AtomicU8,Ordering},
         Arc,Mutex,
     },
     thread,
@@ -14,36 +14,86 @@ use std::{
 #[derive(Clone,Copy)]
 pub enum InputKind{Keyboard,Mouse}
 
+const LOCK_NONE:u8=0;
+const LOCK_MANUAL:u8=1;
+const LOCK_AIM:u8=2;
+
 pub struct RuntimeControl{
     pub mouse_locked:AtomicBool,
+    lock_owner:AtomicU8,
     mouse_event:OwnedFd,
 }
 impl RuntimeControl{
     pub fn new(locked:bool)->io::Result<Arc<Self>>{
         let fd=unsafe{libc::eventfd(0,libc::EFD_CLOEXEC|libc::EFD_NONBLOCK)};
         if fd<0{return Err(io::Error::last_os_error())}
-        Ok(Arc::new(Self{mouse_locked:AtomicBool::new(locked),mouse_event:unsafe{OwnedFd::from_raw_fd(fd)}}))
+        Ok(Arc::new(Self{
+            mouse_locked:AtomicBool::new(locked),
+            lock_owner:AtomicU8::new(if locked{LOCK_MANUAL}else{LOCK_NONE}),
+            mouse_event:unsafe{OwnedFd::from_raw_fd(fd)},
+        }))
     }
+
+    /// F8/control-socket lock is an explicit manual owner. It overrides an
+    /// aim-owned lock and therefore always has deterministic unlock semantics.
     pub fn set_locked(&self,locked:bool,allow_lock:bool)->bool{
         if locked&&!allow_lock{return false}
+        self.lock_owner.store(if locked{LOCK_MANUAL}else{LOCK_NONE},Ordering::Release);
         self.mouse_locked.store(locked,Ordering::Release);
         true
     }
 
     pub fn force_unlock(&self){
+        self.lock_owner.store(LOCK_NONE,Ordering::Release);
         self.mouse_locked.store(false,Ordering::Release);
         self.notify_mouse();
     }
 
     pub fn toggle(&self,allow_lock:bool)->Option<bool>{
-        let mut current=self.mouse_locked.load(Ordering::Acquire);
-        loop{
-            let next=!current;
-            if next&&!allow_lock{return None}
-            match self.mouse_locked.compare_exchange(current,next,Ordering::AcqRel,Ordering::Acquire){
-                Ok(_)=>return Some(next),
-                Err(actual)=>current=actual,
-            }
+        let current=self.mouse_locked.load(Ordering::Acquire);
+        if current{
+            self.set_locked(false,allow_lock);
+            return Some(false);
+        }
+        if !allow_lock{return None}
+        self.set_locked(true,true);
+        Some(true)
+    }
+
+    /// Claim the physical pointer for the Aim state only when no manual lock
+    /// owns it. This mirrors Waydroid Helper's explicit input ownership model.
+    pub fn request_aim_lock(&self,allow_lock:bool)->bool{
+        if !allow_lock{return false}
+        if self.lock_owner.compare_exchange(
+            LOCK_NONE,LOCK_AIM,Ordering::AcqRel,Ordering::Acquire
+        ).is_ok(){
+            self.mouse_locked.store(true,Ordering::Release);
+            self.notify_mouse();
+            return true;
+        }
+        false
+    }
+
+    /// Release only an Aim-owned lock. A manual F8 lock survives Aim release.
+    pub fn release_aim_lock(&self)->bool{
+        if self.lock_owner.compare_exchange(
+            LOCK_AIM,LOCK_NONE,Ordering::AcqRel,Ordering::Acquire
+        ).is_ok(){
+            self.mouse_locked.store(false,Ordering::Release);
+            self.notify_mouse();
+            true
+        }else{
+            // Ownership was transferred to another owner (for example a manual
+            // F8 lock) while Aim was active. The new owner must keep the grab.
+            false
+        }
+    }
+
+    pub fn owner_name(&self)->&'static str{
+        match self.lock_owner.load(Ordering::Acquire){
+            LOCK_MANUAL=>"manual",
+            LOCK_AIM=>"aim",
+            _=>"none",
         }
     }
 
@@ -174,6 +224,40 @@ fn flush_pending_mouse_events(d:&mut Device){
     }
 }
 
+fn apply_mouse_lock(
+    d:&mut Device,
+    desired:bool,
+    grab:bool,
+    discard_queued:bool,
+    mapper:&Arc<Mutex<Mapper>>,
+    control:&Arc<RuntimeControl>,
+)->bool{
+    if desired{
+        if !grab{
+            control.force_unlock();
+            if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+            return false;
+        }
+        match d.grab(){
+            Ok(())=>{
+                if discard_queued{flush_pending_mouse_events(d);}
+                if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(true);}
+                true
+            }
+            Err(e)=>{
+                eprintln!("waydroid-keymapper: mouse grab failed: {e}");
+                control.force_unlock();
+                if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+                false
+            }
+        }
+    }else{
+        let _=d.ungrab();
+        if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
+        true
+    }
+}
+
 fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>){
     let mut d=match Device::open(path){
         Ok(x)=>x,
@@ -185,32 +269,31 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
         return;
     }
 
-    let (grab,realtime)=match mapper.lock(){
-        Ok(m)=>(m.config().performance.grab,m.config().performance.realtime),
+    let (grab,realtime,auto_lock_on_aim,aim_button)=match mapper.lock(){
+        Ok(m)=>(
+            m.config().performance.grab,
+            m.config().performance.realtime,
+            m.config().performance.auto_lock_on_aim,
+            m.config().aim.as_ref().and_then(|a|button_code(&a.button).ok()),
+        ),
         Err(_)=>return,
     };
     let priority=match mapper.lock(){Ok(m)=>m.config().performance.realtime_priority,Err(_)=>10};
     best_effort_realtime(realtime,priority,"wd-mouse");
 
     let mut locked=control.mouse_locked.load(Ordering::Acquire);
-    if grab && locked{
-        if let Err(e)=d.grab(){
-            eprintln!("waydroid-keymapper: mouse grab failed for {path}: {e}");
-            locked=false;
-            control.mouse_locked.store(false,Ordering::Release);
-        }else{
-            // Never forward motion that was queued before the actual grab.
-            flush_pending_mouse_events(&mut d);
-        }
-    }
-    if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
+    if locked{
+        locked=apply_mouse_lock(&mut d,true,grab,true,mapper,control);
+    }else if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
 
     loop{
         if control::shutdown_requested(){
             let _=d.ungrab();
             if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            control.force_unlock();
             break
         }
+
         let mut fds=[
             libc::pollfd{fd:d.as_raw_fd(),events:libc::POLLIN,revents:0},
             libc::pollfd{fd:control.event_fd(),events:libc::POLLIN,revents:0},
@@ -220,7 +303,9 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
         if rc<0{
             if control::shutdown_requested(){break}
             if io::Error::last_os_error().kind()==io::ErrorKind::Interrupted{continue}
+            let _=d.ungrab();
             if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            control.force_unlock();
             return;
         }
 
@@ -228,64 +313,80 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
             control.drain_notifications();
             let desired=control.mouse_locked.load(Ordering::Acquire);
             if desired!=locked{
-                let ok=if grab{
-                    if desired{d.grab().is_ok()}else{d.ungrab().is_ok()}
-                }else{true};
-
-                if ok{
-                    if desired{
-                        // Discard packets queued before the exclusive grab. They
-                        // belong to the unlocked desktop stream and must not
-                        // become the first in-game movement after locking.
-                        flush_pending_mouse_events(&mut d);
-                    }
-                    locked=desired;
-                    if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
-                }else if desired{
-                    // Never report locked while the kernel grab actually failed.
-                    control.mouse_locked.store(false,Ordering::Release);
-                    locked=false;
-                    if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(false);}
-                }
+                locked=apply_mouse_lock(&mut d,desired,grab,true,mapper,control);
             }
         }
 
         if fds[0].revents&(libc::POLLERR|libc::POLLHUP|libc::POLLNVAL)!=0{
             let _=d.ungrab();
             if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+            control.force_unlock();
             return;
         }
 
         if fds[0].revents&libc::POLLIN!=0{
-            // After Unlock the compositor owns the device again. Do not read a
-            // pending batch here, otherwise we would consume events intended
-            // for GNOME after releasing EVIOCGRAB.
-            if !locked{continue}
             let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
             match fetched{
                 Ok(events)=>{
-                    let mut m=match mapper.lock(){Ok(x)=>x,Err(_)=>return};
+                    // Keep one Android relative-motion transaction per evdev
+                    // batch. Motion that arrived before an Aim grab is never
+                    // replayed into the newly captured camera.
                     let mut dx=0i32;
                     let mut dy=0i32;
                     for e in events{
                         match e.destructure(){
                             EventSummary::RelativeAxis(_,c,v)=>{
-                                if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
-                                else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
+                                if locked{
+                                    if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
+                                    else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
+                                }
                             }
                             EventSummary::Key(_,c,v)=>{
-                                if dx!=0||dy!=0{m.mouse(dx,dy);dx=0;dy=0;}
-                                m.button(c.0,v);
+                                if locked&&(dx!=0||dy!=0){
+                                    if let Ok(mut m)=mapper.lock(){m.mouse(dx,dy);}
+                                    dx=0;dy=0;
+                                }
+                                let code=c.0;
+                                let mut process_button=true;
+
+                                // Aim acquisition is driven by the physical Aim
+                                // button, not by a separate F8 step.
+                                if Some(code)==aim_button&&v==1&&auto_lock_on_aim{
+                                    if control.request_aim_lock(grab){
+                                        locked=apply_mouse_lock(&mut d,true,grab,false,mapper,control);
+                                        if !locked{process_button=false;}
+                                    }
+                                }
+
+                                // Ordinary gameplay mouse bindings are suppressed
+                                // while GNOME owns the pointer. The Aim press may
+                                // pass through only as the capture transition.
+                                if process_button && (locked || Some(code)==aim_button){
+                                    if let Ok(mut m)=mapper.lock(){m.button(code,v);}
+                                }
+
+                                // Mapper state is released first; only then is the
+                                // kernel grab dropped for an Aim-owned lock.
+                                if Some(code)==aim_button&&v==0&&auto_lock_on_aim{
+                                    if control.release_aim_lock(){
+                                        locked=apply_mouse_lock(&mut d,false,grab,false,mapper,control);
+                                    }else{
+                                        locked=control.mouse_locked.load(Ordering::Acquire);
+                                    }
+                                }
                             }
                             _=>{}
                         }
                     }
-                    if dx!=0||dy!=0{m.mouse(dx,dy);}
+                    if locked&&(dx!=0||dy!=0){
+                        if let Ok(mut m)=mapper.lock(){m.mouse(dx,dy);}
+                    }
                 }
                 Err(e)=>{
                     if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::Interrupted){continue}
                     let _=d.ungrab();
                     if let Ok(mut m)=mapper.lock(){m.reset_mouse_state();}
+                    control.force_unlock();
                     return;
                 }
             }
@@ -493,6 +594,25 @@ mod runtime_control_tests{
 
         assert_eq!(control.toggle(true),Some(true));
         assert!(control.mouse_locked.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn aim_lock_has_exclusive_ownership(){
+        let control=RuntimeControl::new(false).unwrap();
+        assert_eq!(control.owner_name(),"none");
+        assert!(control.request_aim_lock(true));
+        assert_eq!(control.owner_name(),"aim");
+        assert!(control.mouse_locked.load(Ordering::Acquire));
+        assert!(!control.request_aim_lock(true));
+        let _=control.release_aim_lock();
+        assert_eq!(control.owner_name(),"none");
+        assert!(!control.mouse_locked.load(Ordering::Acquire));
+
+        assert_eq!(control.toggle(true),Some(true));
+        assert_eq!(control.owner_name(),"manual");
+        assert!(!control.request_aim_lock(true));
+        assert_eq!(control.toggle(true),Some(false));
+        assert_eq!(control.owner_name(),"none");
     }
 
     #[test]

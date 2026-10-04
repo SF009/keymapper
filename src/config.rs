@@ -21,9 +21,9 @@ pub struct Config{
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct Hold{pub key:String,pub x:f32,pub y:f32,#[serde(default="s3")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseTap{pub button:String,pub x:f32,pub y:f32,#[serde(default="s4")]pub slot:u8}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct MouseHold{pub button:String,pub x:f32,pub y:f32,#[serde(default="s5")]pub slot:u8}
-#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="prio")]pub realtime_priority:i32,#[serde(default="dm")]pub mouse_lock:bool,#[serde(default="f8")]pub mouse_toggle_key:String,#[serde(default="wr")]pub fifo_write_retries:u8,#[serde(default="ww")]pub fifo_write_wait_ms:u64,#[serde(default="rb")]pub fifo_reconnect_ms:u64}
-fn ds()->f32{1.0} fn one()->f32{1.0} fn edge()->f32{0.12} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn dtrue()->bool{true} fn dm()->bool{false} fn f8()->String{"F8".into()} fn prio()->i32{10} fn wr()->u8{3} fn ww()->u64{1} fn rb()->u64{25} fn tp()->i32{80} fn tm()->i32{8} fn touch_mode()->String{"touch".into()}
-impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25}}}
+#[derive(Clone,Debug,Deserialize,Serialize)]pub struct Performance{#[serde(default="dt")]pub grab:bool,#[serde(default="dt")]pub realtime:bool,#[serde(default="prio")]pub realtime_priority:i32,#[serde(default="dm")]pub mouse_lock:bool,#[serde(default="ala")]pub auto_lock_on_aim:bool,#[serde(default="f8")]pub mouse_toggle_key:String,#[serde(default="wr")]pub fifo_write_retries:u8,#[serde(default="ww")]pub fifo_write_wait_ms:u64,#[serde(default="rb")]pub fifo_reconnect_ms:u64}
+fn ds()->f32{1.0} fn one()->f32{1.0} fn edge()->f32{0.12} fn ala()->bool{true} fn s1()->u8{1} fn s2()->u8{2} fn s3()->u8{3} fn s4()->u8{4} fn s5()->u8{5} fn dt()->bool{true} fn dtrue()->bool{true} fn dm()->bool{false} fn f8()->String{"F8".into()} fn prio()->i32{10} fn wr()->u8{3} fn ww()->u64{1} fn rb()->u64{25} fn tp()->i32{80} fn tm()->i32{8} fn touch_mode()->String{"touch".into()}
+impl Default for Performance{fn default()->Self{Self{grab:true,realtime:true,realtime_priority:10,mouse_lock:false,auto_lock_on_aim:true,mouse_toggle_key:"F8".into(),fifo_write_retries:3,fifo_write_wait_ms:1,fifo_reconnect_ms:25}}}
 #[derive(Clone,Debug,Deserialize,Serialize)]pub struct TouchSettings{#[serde(default="tp")]pub pressure:i32,#[serde(default="tm")]pub major:i32,#[serde(default="tm")]pub minor:i32}
 impl Default for TouchSettings{fn default()->Self{Self{pressure:80,major:8,minor:8}}}
 
@@ -57,8 +57,8 @@ impl Config{
   if let (Some(k),Some(m))=(&self.devices.keyboard,&self.devices.mouse){
    if !k.is_empty()&&!m.is_empty()&&k==m{return Err("keyboard and mouse cannot use the same evdev device".into())}
   }
-  if self.performance.mouse_lock&&!self.performance.grab{
-   return Err("mouse_lock requires performance.grab=true".into())
+  if (self.performance.mouse_lock||self.performance.auto_lock_on_aim)&&!self.performance.grab{
+   return Err("mouse_lock/auto_lock_on_aim requires performance.grab=true".into())
   }
   if self.performance.realtime_priority<1||self.performance.realtime_priority>99{return Err("realtime_priority must be 1..99".into())}
   if self.performance.fifo_write_retries==0||self.performance.fifo_write_retries>8{return Err("fifo_write_retries must be 1..8".into())}
@@ -140,14 +140,14 @@ mod tests{
  #[test]
  fn default_performance_is_shooter_safe(){
   let p=Performance::default();
-  assert!(p.grab&&p.realtime&&!p.mouse_lock);
+  assert!(p.grab&&p.realtime&&!p.mouse_lock&&p.auto_lock_on_aim);
   assert_eq!(p.mouse_toggle_key,"F8");assert_eq!(p.realtime_priority,10);assert_eq!(p.fifo_write_retries,3);assert_eq!(p.fifo_write_wait_ms,1);assert_eq!(p.fifo_reconnect_ms,25);
  }
 
  #[test]
  fn missing_mouse_lock_defaults_to_unlocked(){
   let p:Performance=toml::from_str("grab=true\nrealtime=true\n").unwrap();
-  assert!(!p.mouse_lock);
+  assert!(!p.mouse_lock&&p.auto_lock_on_aim);
  }
 
  #[test]

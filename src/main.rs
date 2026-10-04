@@ -1,12 +1,9 @@
-mod config;
-mod control;
-mod input;
-mod touch;
-
-use config::Config;
-use input::{spawn_input,InputKind,RuntimeControl};
+use waydroid_keymapper::{
+ config::Config,
+ input::{self,spawn_input,InputKind,RuntimeControl},
+};
+use waydroid_keymapper::{control,touch::Mapper};
 use std::{env,error::Error,fs,path::PathBuf,sync::{Arc,Mutex},thread,time::Duration};
-use touch::Mapper;
 
 fn print_help(){
  eprintln!("Waydroid Keymapper — low-latency keyboard/mouse mapper");
@@ -15,6 +12,7 @@ fn print_help(){
  eprintln!("  waydroid-keymapper [run] [CONFIG]");
  eprintln!("  waydroid-keymapper check [CONFIG]");
  eprintln!("  waydroid-keymapper devices");
+ eprintln!("  waydroid-keymapper doctor [CONFIG]");
  eprintln!("  waydroid-keymapper --help");
 }
 
@@ -35,13 +33,40 @@ fn main()->Result<(),Box<dyn Error>>{
   for d in input::list_input_devices(){println!("{}\t{}",d.path,d.name);}
   return Ok(())
  }
- if !matches!(cmd.as_str(),"run"|"check"){
+ if !matches!(cmd.as_str(),"run"|"check"|"doctor"){
   print_help();
   return Err(format!("unknown command: {cmd}").into())
  }
  let path=PathBuf::from(a.next().unwrap_or_else(||env::var("WAYDROID_KEYMAPPER_CONFIG").unwrap_or_else(|_|format!("{}/.config/waydroid-keymapper/config.toml",env::var("HOME").unwrap_or_else(|_|".".into())))));
  let data=fs::read_to_string(&path).map_err(|e|format!("cannot read config '{}': {e}. Open the GTK GUI to create/manage it.",path.display()))?;
  let cfg:Config=toml::from_str(&data)?;
+
+ if cmd=="doctor"{
+  let mut issues=Vec::<String>::new();
+  if let Err(e)=cfg.validate_runtime(){issues.push(format!("config: {e}"));}
+  for (kind,path_opt) in [("keyboard",&cfg.devices.keyboard),("mouse",&cfg.devices.mouse)]{
+   if let Some(path)=path_opt{
+    if let Err(e)=evdev::Device::open(path){issues.push(format!("{kind} evdev: {e}"));}
+   }
+  }
+  let touch=cfg.touch_fifo();
+  if !std::path::Path::new(&touch).exists(){issues.push(format!("touch FIFO missing: {touch}"));}
+  if cfg.aim.as_ref().is_some_and(|a|a.mode.eq_ignore_ascii_case("relative")){
+   let pointer=cfg.pointer_fifo();
+   if !std::path::Path::new(&pointer).exists(){issues.push(format!("pointer FIFO missing: {pointer}"));}
+  }
+  match std::process::Command::new("waydroid").arg("status").output(){
+   Ok(o)=>{
+    let s=String::from_utf8_lossy(&o.stdout).trim().replace('\n'," | ");
+    println!("waydroid: {}",if s.is_empty(){"unknown"}else{&s});
+   }
+   Err(e)=>issues.push(format!("waydroid command: {e}")),
+  }
+  if issues.is_empty(){println!("doctor: all checks passed ✓");return Ok(())}
+  eprintln!("doctor: {} issue(s)",issues.len());
+  for x in issues{eprintln!("  - {x}")}
+  return Err("Waydroid Keymapper doctor found problems".into())
+ }
  if cmd=="check"{
   let conflicts=cfg.conflicts();
   if !conflicts.is_empty(){
@@ -80,7 +105,7 @@ fn main()->Result<(),Box<dyn Error>>{
    return Err(e)
   }
  }
- eprintln!("waydroid-keymapper: running");
+ eprintln!("waydroid-keymapper: running (Aim auto-lock={}, manual toggle={})",cfg.performance.auto_lock_on_aim,cfg.performance.mouse_toggle_key);
  while !control::shutdown_requested(){thread::sleep(Duration::from_millis(200))}
  if let Ok(mut m)=mapper.lock(){
   m.reset_keyboard_state();

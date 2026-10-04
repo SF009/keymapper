@@ -28,7 +28,7 @@ invert_y=false
 scale_x=1.0
 scale_y=1.0
 edge_margin=0.12
-# touch = compatible absolute aim; relative = unbounded FPS mouse aim
+# touch = compatible absolute aim; relative = unbounded FPS mouse aim. Relative mode auto-locks while RMB is held.
 mode="relative"
 
 [[taps]]
@@ -54,7 +54,9 @@ grab=true
 realtime=true
 realtime_priority=10
 mouse_lock = false
-# F8 toggles capture: locked -> desktop mouse released, unlocked -> capture again
+# Helper-style: pressing/holding the Aim button acquires the mouse automatically.
+auto_lock_on_aim = true
+# F8 is the manual lock toggle; Ctrl+Alt+F12 is the emergency unlock.
 mouse_toggle_key="F8"
 # Bounded FIFO tuning; keep defaults for lowest input latency
 fifo_write_retries=3
