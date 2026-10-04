@@ -323,52 +323,45 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
             let fetched=d.fetch_events().map(|events|events.collect::<Vec<_>>());
             match fetched{
                 Ok(events)=>{
+                    // Keep one Android relative-motion transaction per evdev
+                    // batch. Motion that arrived before an Aim grab is never
+                    // replayed into the newly captured camera.
+                    let mut dx=0i32;
+                    let mut dy=0i32;
                     for e in events{
                         match e.destructure(){
                             EventSummary::RelativeAxis(_,c,v)=>{
-                                // Our evdev client has its own event queue, so
-                                // draining motion while unlocked does NOT steal
-                                // GNOME's events. This prevents a permanent
-                                // POLLIN/CPU spin in the unlocked state.
                                 if locked{
-                                    if c==RelativeAxisCode::REL_X{
-                                        if let Ok(mut m)=mapper.lock(){m.mouse(v,0);}
-                                    }else if c==RelativeAxisCode::REL_Y{
-                                        if let Ok(mut m)=mapper.lock(){m.mouse(0,v);}
-                                    }
+                                    if c==RelativeAxisCode::REL_X{dx=dx.saturating_add(v);}
+                                    else if c==RelativeAxisCode::REL_Y{dy=dy.saturating_add(v);}
                                 }
                             }
                             EventSummary::Key(_,c,v)=>{
+                                if locked&&(dx!=0||dy!=0){
+                                    if let Ok(mut m)=mapper.lock(){m.mouse(dx,dy);}
+                                    dx=0;dy=0;
+                                }
                                 let code=c.0;
-
-                                // Aim ownership is acquired from the actual
-                                // Aim button press, rather than requiring F8
-                                // to be pressed first.
                                 let mut process_button=true;
+
+                                // Aim acquisition is driven by the physical Aim
+                                // button, not by a separate F8 step.
                                 if Some(code)==aim_button&&v==1&&auto_lock_on_aim{
                                     if control.request_aim_lock(grab){
                                         locked=apply_mouse_lock(&mut d,true,grab,false,mapper,control);
-                                        if !locked{
-                                            // Never start the Aim state when the
-                                            // kernel grab failed; this prevents a
-                                            // relative-aim state from becoming
-                                            // permanently stuck without motion.
-                                            process_button=false;
-                                        }
+                                        if !locked{process_button=false;}
                                     }
                                 }
 
-                                // Gameplay mouse bindings are active only while the
-                                // mapper owns the pointer. The Aim button is the one exception:
-                                // its press is allowed to transition an unlocked desktop into
-                                // the captured shooter state.
+                                // Ordinary gameplay mouse bindings are suppressed
+                                // while GNOME owns the pointer. The Aim press may
+                                // pass through only as the capture transition.
                                 if process_button && (locked || Some(code)==aim_button){
                                     if let Ok(mut m)=mapper.lock(){m.button(code,v);}
                                 }
 
-                                // Release the touch/firing state BEFORE releasing
-                                // an Aim-owned kernel grab, matching Helper's
-                                // AIM_RELEASED -> unlock ordering.
+                                // Mapper state is released first; only then is the
+                                // kernel grab dropped for an Aim-owned lock.
                                 if Some(code)==aim_button&&v==0&&auto_lock_on_aim{
                                     control.release_aim_lock();
                                     locked=apply_mouse_lock(&mut d,false,grab,false,mapper,control);
@@ -376,6 +369,9 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                             }
                             _=>{}
                         }
+                    }
+                    if locked&&(dx!=0||dy!=0){
+                        if let Ok(mut m)=mapper.lock(){m.mouse(dx,dy);}
                     }
                 }
                 Err(e)=>{
@@ -386,6 +382,7 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                     return;
                 }
             }
+        }
         }
     }
 }
