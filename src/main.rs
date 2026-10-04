@@ -16,11 +16,13 @@ fn print_help(){
  eprintln!("  waydroid-keymapper --help");
 }
 
-fn main()->Result<(),Box<dyn Error>>{
- control::install_signal_handlers();
- // Waydroid's FIFO reader can disappear during a restart. Ignore SIGPIPE so
- // the mapper receives EPIPE and can reconnect instead of being terminated.
- unsafe{libc::signal(libc::SIGPIPE,libc::SIG_IGN);}
+fn main() -> Result<(), Box<dyn Error>> {
+    control::install_signal_handlers();
+    // Waydroid's FIFO reader can disappear during a restart. Ignore SIGPIPE so
+    // the mapper receives EPIPE and can reconnect instead of being terminated.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
 
  let mut a=env::args().skip(1);
  let cmd=a.next().unwrap_or_else(||"run".into());
@@ -86,12 +88,12 @@ fn main()->Result<(),Box<dyn Error>>{
  let mapper=Arc::new(Mutex::new(Mapper::new(cfg.clone())?));
  let control=RuntimeControl::new(cfg.performance.mouse_lock)?;
 
- // Bind the control endpoint before touching any input device. This makes
- // duplicate daemon instances fail before they can compete for evdev input.
- if let Err(e)=control::spawn_server(mapper.clone(),control.clone()){
-  eprintln!("waydroid-keymapper: cannot start control server: {e}");
-  return Err(e.into())
- }
+    // Bind the control endpoint before touching any input device. This makes
+    // duplicate daemon instances fail before they can compete for evdev input.
+    if let Err(e) = control::spawn_server(mapper.clone(), control.clone()) {
+        eprintln!("waydroid-keymapper: cannot start control server: {e}");
+        return Err(e.into());
+    }
 
  if let Some(d)=cfg.devices.keyboard.clone(){
   if let Err(e)=spawn_input(d,InputKind::Keyboard,mapper.clone(),control.clone()){

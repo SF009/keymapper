@@ -4,19 +4,20 @@ use std::{
     env,
     error::Error,
     fs,
-    io::{self,Read,Write},
-    os::unix::net::{UnixListener,UnixStream},
+    io::{self, Read, Write},
+    os::unix::fs::PermissionsExt,
+    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
-    sync::{Arc,Mutex},
+    sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
-    sync::atomic::{AtomicBool,Ordering},
 };
 
-pub static SHUTDOWN:AtomicBool=AtomicBool::new(false);
+pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-pub extern "C" fn signal_handler(_:libc::c_int){
-    SHUTDOWN.store(true,Ordering::Release);
+pub extern "C" fn signal_handler(_: libc::c_int) {
+    SHUTDOWN.store(true, Ordering::Release);
 }
 
 pub fn install_signal_handlers(){
@@ -27,30 +28,34 @@ pub fn install_signal_handlers(){
     }
 }
 
-pub fn shutdown_requested()->bool{SHUTDOWN.load(Ordering::Acquire)}
+pub fn shutdown_requested() -> bool {
+    SHUTDOWN.load(Ordering::Acquire)
+}
 
-pub fn socket_path()->PathBuf{
-    if let Some(dir)=env::var_os("XDG_RUNTIME_DIR"){
-        let dir=PathBuf::from(dir);
-        if dir.is_dir(){
+pub fn socket_path() -> PathBuf {
+    if let Some(dir) = env::var_os("XDG_RUNTIME_DIR") {
+        let dir = PathBuf::from(dir);
+        if dir.is_dir() {
             return dir.join("waydroid-keymapper.sock");
         }
     }
     home_dir().join(".cache/waydroid-keymapper/waydroid-keymapper.sock")
 }
 
-fn home_dir()->PathBuf{
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("."))
+fn home_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
-pub fn request(command:&str)->Result<String,Box<dyn Error>>{
-    let mut stream=UnixStream::connect(socket_path())?;
-    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(100)))?;
+pub fn request(command: &str) -> Result<String, Box<dyn Error>> {
+    let mut stream = UnixStream::connect(socket_path())?;
+    stream.set_read_timeout(Some(Duration::from_millis(150)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(150)))?;
     stream.write_all(command.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.shutdown(std::net::Shutdown::Write).ok();
-    let mut out=String::new();
+    let mut out = String::new();
     stream.read_to_string(&mut out)?;
     Ok(out.trim().to_string())
 }
@@ -70,12 +75,16 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
                 if grab{1}else{0},
                 socket_path().display())
         }
-        "lock"=>{
-            let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
-            if control.set_locked(true,can_grab){
-                control.notify_mouse();
+        "lock" => {
+            let can_grab = mapper
+                .lock()
+                .map(|m| m.config().performance.grab)
+                .unwrap_or(false);
+            if control.set_locked(true, can_grab) {
                 "OK requested=lock".to_string()
-            }else{"ERR cannot-lock: exclusive input grab is disabled".to_string()}
+            } else {
+                "ERR cannot-lock: exclusive input grab is disabled".to_string()
+            }
         }
         "unlock"=>{
             if control.set_locked(false,true){
@@ -83,67 +92,70 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
             }
             "OK requested=unlock".to_string()
         }
-        "toggle"=>{
-            let can_grab=mapper.lock().map(|m|m.config().performance.grab).unwrap_or(false);
-            match control.toggle(can_grab){
-                Some(next)=>{control.notify_mouse();format!("OK requested={}",if next{"lock"}else{"unlock"})}
-                None=>"ERR cannot-lock: exclusive input grab is disabled".to_string(),
+        "toggle" => {
+            let can_grab = mapper
+                .lock()
+                .map(|m| m.config().performance.grab)
+                .unwrap_or(false);
+            match control.toggle(can_grab) {
+                Some(next) => format!("OK requested={}", if next { "lock" } else { "unlock" }),
+                None => "ERR cannot-lock: exclusive input grab is disabled".to_string(),
             }
         }
-        "ping"=>"OK pong".to_string(),
-        _=>"ERR unknown-command (status|lock|unlock|toggle|ping)".to_string(),
+        "ping" => "OK pong".to_string(),
+        _ => "ERR unknown-command (status|lock|unlock|toggle|ping)".to_string(),
     };
-    let _=stream.write_all(reply.as_bytes());
+    let _ = stream.write_all(reply.as_bytes());
 }
 
-pub fn spawn_server(mapper:Arc<Mutex<Mapper>>,control:Arc<RuntimeControl>)->io::Result<()>{
-    let path=socket_path();
-    if let Some(parent)=path.parent(){
+pub fn spawn_server(mapper: Arc<Mutex<Mapper>>, control: Arc<RuntimeControl>) -> io::Result<()> {
+    let path = socket_path();
+    if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
-        // The /tmp fallback was replaced with a private per-user directory.
-        // Keep that directory inaccessible to other users.
-        if parent.to_string_lossy().contains(".cache/waydroid-keymapper"){
-            let _=fs::set_permissions(parent,fs::Permissions::from_mode(0o700));
+        if parent.to_string_lossy().contains(".cache/waydroid-keymapper") {
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
     }
-    if path.exists(){
-        match UnixStream::connect(&path){
-            Ok(mut stream)=>{
-                let _=stream.set_read_timeout(Some(Duration::from_millis(100)));
-                let _=stream.set_write_timeout(Some(Duration::from_millis(100)));
-                let _=stream.write_all(b"ping\n");
-                let mut reply=String::new();
-                let _=stream.read_to_string(&mut reply);
-                if reply.trim()=="OK pong"{
-                    return Err(io::Error::new(io::ErrorKind::AddrInUse,"another waydroid-keymapper instance is already running"));
+    if path.exists() {
+        match UnixStream::connect(&path) {
+            Ok(mut stream) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+                let _ = stream.write_all(b"ping\n");
+                let mut reply = String::new();
+                let _ = stream.read_to_string(&mut reply);
+                if reply.trim() == "OK pong" {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        "another waydroid-keymapper instance is already running",
+                    ));
                 }
-                let _=fs::remove_file(&path);
+                let _ = fs::remove_file(&path);
             }
-            Err(_) =>{
-                let _=fs::remove_file(&path);
+            Err(_) => {
+                let _ = fs::remove_file(&path);
             }
         }
     }
-    let listener=UnixListener::bind(&path)?;
-    let _=fs::set_permissions(&path,fs::Permissions::from_mode(0o600));
-    thread::spawn(move||{
-        for stream in listener.incoming(){
-            match stream{
-                Ok(s)=>{
-                    let m=mapper.clone();
-                    let c=control.clone();
-                    thread::spawn(move||handle(s,&m,&c));
+    let listener = UnixListener::bind(&path)?;
+    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(s) => {
+                    let m = mapper.clone();
+                    let c = control.clone();
+                    thread::spawn(move || handle(s, &m, &c));
                 }
-                Err(e)=>eprintln!("waydroid-keymapper: control socket error: {e}"),
+                Err(e) => eprintln!("waydroid-keymapper: control socket error: {e}"),
             }
         }
-        let _=fs::remove_file(socket_path());
+        let _ = fs::remove_file(socket_path());
     });
-    eprintln!("waydroid-keymapper: control socket {}",path.display());
+    eprintln!("waydroid-keymapper: control socket {}", path.display());
     Ok(())
 }
 
-use std::os::unix::fs::PermissionsExt;
-
-
-pub fn remove_socket(){let _=fs::remove_file(socket_path());}
+pub fn remove_socket() {
+    let _ = fs::remove_file(socket_path());
+}

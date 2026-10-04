@@ -122,6 +122,366 @@ impl Config{
  }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MouseTap {
+    pub button: String,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default = "s4")]
+    pub slot: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MouseHold {
+    pub button: String,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default = "s5")]
+    pub slot: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Performance {
+    #[serde(default = "dt")]
+    pub grab: bool,
+    #[serde(default = "dt")]
+    pub realtime: bool,
+    #[serde(default = "prio")]
+    pub realtime_priority: i32,
+    #[serde(default = "dm")]
+    pub mouse_lock: bool,
+    #[serde(default = "f8")]
+    pub mouse_toggle_key: String,
+    #[serde(default = "wr")]
+    pub fifo_write_retries: u8,
+    #[serde(default = "ww")]
+    pub fifo_write_wait_ms: u64,
+    #[serde(default = "rb")]
+    pub fifo_reconnect_ms: u64,
+}
+
+fn ds() -> f32 { 1.0 }
+fn one() -> f32 { 1.0 }
+fn edge() -> f32 { 0.12 }
+fn s1() -> u8 { 1 }
+fn s2() -> u8 { 2 }
+fn s3() -> u8 { 3 }
+fn s4() -> u8 { 4 }
+fn s5() -> u8 { 5 }
+fn dt() -> bool { true }
+fn dtrue() -> bool { true }
+fn dm() -> bool { false }
+fn f8() -> String { "F8".into() }
+fn aim_btn() -> String { "ALWAYS".into() }
+fn relative_mode() -> String { "relative".into() }
+fn prio() -> i32 { 10 }
+fn wr() -> u8 { 3 }
+fn ww() -> u64 { 1 }
+fn rb() -> u64 { 25 }
+fn tp() -> i32 { 80 }
+fn tm() -> i32 { 8 }
+
+impl Default for Performance {
+    fn default() -> Self {
+        Self {
+            grab: true,
+            realtime: true,
+            realtime_priority: 10,
+            mouse_lock: false,
+            mouse_toggle_key: "F8".into(),
+            fifo_write_retries: 3,
+            fifo_write_wait_ms: 1,
+            fifo_reconnect_ms: 25,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TouchSettings {
+    #[serde(default = "tp")]
+    pub pressure: i32,
+    #[serde(default = "tm")]
+    pub major: i32,
+    #[serde(default = "tm")]
+    pub minor: i32,
+}
+
+impl Default for TouchSettings {
+    fn default() -> Self {
+        Self {
+            pressure: 80,
+            major: 8,
+            minor: 8,
+        }
+    }
+}
+
+impl Config {
+    pub fn conflicts(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut keys: Vec<(u16, String)> = Vec::new();
+        let mut mice: Vec<(u16, String)> = Vec::new();
+
+        if let Some(j) = &self.joystick {
+            for (name, key) in [
+                ("joystick.up", &j.up),
+                ("joystick.down", &j.down),
+                ("joystick.left", &j.left),
+                ("joystick.right", &j.right),
+            ] {
+                if let Ok(code) = crate::input::key_code(key) {
+                    keys.push((code, name.into()));
+                }
+            }
+        }
+
+        for (i, x) in self.taps.iter().enumerate() {
+            if let Ok(code) = crate::input::key_code(&x.key) {
+                keys.push((code, format!("taps[{i}]")));
+            }
+        }
+        for (i, x) in self.holds.iter().enumerate() {
+            if let Ok(code) = crate::input::key_code(&x.key) {
+                keys.push((code, format!("holds[{i}]")));
+            }
+        }
+        if let Ok(toggle) = crate::input::key_code(&self.performance.mouse_toggle_key) {
+            keys.push((toggle, "performance.mouse_toggle_key".into()));
+        }
+
+        for i in 0..keys.len() {
+            for j in (i + 1)..keys.len() {
+                if keys[i].0 == keys[j].0 {
+                    out.push(format!("keyboard conflict: {} <-> {}", keys[i].1, keys[j].1));
+                }
+            }
+        }
+
+        if let Some(a) = &self.aim {
+            if !is_continuous_aim(&a.button) {
+                if let Ok(code) = crate::input::button_code(&a.button) {
+                    mice.push((code, "aim.button".into()));
+                }
+            }
+        }
+        for (i, x) in self.mouse_taps.iter().enumerate() {
+            if let Ok(code) = crate::input::button_code(&x.button) {
+                mice.push((code, format!("mouse_taps[{i}]")));
+            }
+        }
+        for (i, x) in self.mouse_holds.iter().enumerate() {
+            if let Ok(code) = crate::input::button_code(&x.button) {
+                mice.push((code, format!("mouse_holds[{i}]")));
+            }
+        }
+
+        for i in 0..mice.len() {
+            for j in (i + 1)..mice.len() {
+                if mice[i].0 == mice[j].0 {
+                    out.push(format!("mouse conflict: {} <-> {}", mice[i].1, mice[j].1));
+                }
+            }
+        }
+
+        if let Some(j) = &self.joystick {
+            let dirs = [
+                ("up", &j.up),
+                ("down", &j.down),
+                ("left", &j.left),
+                ("right", &j.right),
+            ];
+            for i in 0..dirs.len() {
+                for k in (i + 1)..dirs.len() {
+                    if dirs[i].1.eq_ignore_ascii_case(dirs[k].1) {
+                        out.push(format!(
+                            "joystick conflict: {} and {} use {}",
+                            dirs[i].0, dirs[k].0, dirs[i].1
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub fn validate(&self) -> Result<(), Box<dyn Error>> {
+        if self.display.width <= 0 || self.display.height <= 0 {
+            return Err("invalid display size".into());
+        }
+        if self.display.width > 16384 || self.display.height > 16384 {
+            return Err("display size is too large".into());
+        }
+        if let (Some(k), Some(m)) = (&self.devices.keyboard, &self.devices.mouse) {
+            if !k.is_empty() && !m.is_empty() && k == m {
+                return Err("keyboard and mouse cannot use the same evdev device".into());
+            }
+        }
+        if self.performance.mouse_lock && !self.performance.grab {
+            return Err("mouse_lock requires performance.grab=true".into());
+        }
+        if self.performance.realtime_priority < 1 || self.performance.realtime_priority > 99 {
+            return Err("realtime_priority must be 1..99".into());
+        }
+        if self.performance.fifo_write_retries == 0 || self.performance.fifo_write_retries > 8 {
+            return Err("fifo_write_retries must be 1..8".into());
+        }
+        if self.performance.fifo_write_wait_ms > 5 {
+            return Err("fifo_write_wait_ms must be 0..5 ms".into());
+        }
+        if self.performance.fifo_reconnect_ms < 5 || self.performance.fifo_reconnect_ms > 2000 {
+            return Err("fifo_reconnect_ms must be 5..2000 ms".into());
+        }
+        if self.touch.pressure < 1
+            || self.touch.pressure > 255
+            || self.touch.major < 1
+            || self.touch.major > 255
+            || self.touch.minor < 1
+            || self.touch.minor > 255
+        {
+            return Err("touch pressure/major/minor must be 1..255".into());
+        }
+        if let Some(j) = &self.joystick {
+            for k in [&j.up, &j.down, &j.left, &j.right] {
+                crate::input::key_code(k)?;
+            }
+            if !(0.0..=1.0).contains(&j.center_x)
+                || !(0.0..=1.0).contains(&j.center_y)
+                || j.radius <= 0.0
+                || j.radius > 1.0
+            {
+                return Err("invalid joystick".into());
+            }
+            if j.slot >= 16 {
+                return Err("joystick slot must be 0..15".into());
+            }
+        }
+
+        let mut used = [false; 16];
+        let mut reserve = |slot: u8| -> Result<(), Box<dyn Error>> {
+            let i = slot as usize;
+            if i >= used.len() {
+                return Err("touch slot must be 0..15".into());
+            }
+            if used[i] {
+                return Err(format!("duplicate touch slot {slot}").into());
+            }
+            used[i] = true;
+            Ok(())
+        };
+
+        if let Some(j) = &self.joystick {
+            reserve(j.slot)?;
+        }
+        if let Some(a) = &self.aim {
+            reserve(a.slot)?;
+            if !is_continuous_aim(&a.button) {
+                crate::input::button_code(&a.button)?;
+            }
+            if !(0.0..=1.0).contains(&a.center_x)
+                || !(0.0..=1.0).contains(&a.center_y)
+                || a.sensitivity <= 0.0
+                || a.sensitivity > 100.0
+                || a.scale_x <= 0.0
+                || a.scale_x > 20.0
+                || a.scale_y <= 0.0
+                || a.scale_y > 20.0
+                || a.edge_margin < 0.0
+                || a.edge_margin >= 0.5
+            {
+                return Err("invalid aim".into());
+            }
+            match a.mode.trim().to_ascii_lowercase().as_str() {
+                "touch" | "relative" => {}
+                _ => return Err("aim mode must be touch or relative".into()),
+            }
+        }
+        for x in &self.taps {
+            crate::input::key_code(&x.key)?;
+            reserve(x.slot)?;
+            if !(0.0..=1.0).contains(&x.x) || !(0.0..=1.0).contains(&x.y) {
+                return Err("invalid keyboard tap".into());
+            }
+        }
+        for x in &self.holds {
+            crate::input::key_code(&x.key)?;
+            reserve(x.slot)?;
+            if !(0.0..=1.0).contains(&x.x) || !(0.0..=1.0).contains(&x.y) {
+                return Err("invalid keyboard hold".into());
+            }
+        }
+        for x in &self.mouse_taps {
+            crate::input::button_code(&x.button)?;
+            reserve(x.slot)?;
+            if !(0.0..=1.0).contains(&x.x) || !(0.0..=1.0).contains(&x.y) {
+                return Err("invalid mouse tap".into());
+            }
+        }
+        for x in &self.mouse_holds {
+            crate::input::button_code(&x.button)?;
+            reserve(x.slot)?;
+            if !(0.0..=1.0).contains(&x.x) || !(0.0..=1.0).contains(&x.y) {
+                return Err("invalid mouse hold".into());
+            }
+        }
+        crate::input::key_code(&self.performance.mouse_toggle_key)?;
+        if let Some(msg) = self.conflicts().into_iter().next() {
+            return Err(msg.into());
+        }
+        Ok(())
+    }
+
+    pub fn validate_runtime(&self) -> Result<(), Box<dyn Error>> {
+        self.validate()?;
+
+        let keyboard_required = self.performance.mouse_lock
+            || self.joystick.is_some()
+            || !self.taps.is_empty()
+            || !self.holds.is_empty();
+        if keyboard_required && self.devices.keyboard.as_deref().unwrap_or("").is_empty() {
+            return Err("a keyboard device is required for the configured keyboard mappings".into());
+        }
+
+        let mouse_required = self.performance.mouse_lock
+            || self.aim.is_some()
+            || !self.mouse_taps.is_empty()
+            || !self.mouse_holds.is_empty();
+        if mouse_required && self.devices.mouse.as_deref().unwrap_or("").is_empty() {
+            return Err("a mouse device is required for the configured mouse mappings/lock".into());
+        }
+
+        Ok(())
+    }
+
+    pub fn touch_fifo(&self) -> String {
+        if let Ok(p) = env::var("WAYDROID_TOUCH_FIFO") {
+            return p;
+        }
+        let c = [
+            "/dev/input/wl_touch_events",
+            "/var/lib/waydroid/rootfs/dev/input/wl_touch_events",
+            "/opt/waydroid/rootfs/dev/input/wl_touch_events",
+        ];
+        c.iter()
+            .find(|p| Path::new(p).exists())
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| c[0].into())
+    }
+
+    pub fn pointer_fifo(&self) -> String {
+        if let Ok(p) = env::var("WAYDROID_POINTER_FIFO") {
+            return p;
+        }
+        let c = [
+            "/dev/input/wl_pointer_events",
+            "/var/lib/waydroid/rootfs/dev/input/wl_pointer_events",
+            "/opt/waydroid/rootfs/dev/input/wl_pointer_events",
+        ];
+        c.iter()
+            .find(|p| Path::new(p).exists())
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| c[0].into())
+    }
+}
 
 #[cfg(test)]
 mod tests{
