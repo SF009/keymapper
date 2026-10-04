@@ -157,6 +157,7 @@ struct AimRuntime{
     invert_y:bool,
     scale_x:f32,
     scale_y:f32,
+    edge_margin:f32,
     relative:bool,
 }
 
@@ -205,7 +206,7 @@ impl Mapper{
             AimRuntime{
                 button,center_x:a.center_x,center_y:a.center_y,
                 sensitivity:a.sensitivity,slot:a.slot,invert_x:a.invert_x,invert_y:a.invert_y,
-                scale_x:a.scale_x,scale_y:a.scale_y,relative:a.mode.eq_ignore_ascii_case("relative"),
+                scale_x:a.scale_x,scale_y:a.scale_y,edge_margin:a.edge_margin,relative:a.mode.eq_ignore_ascii_case("relative"),
             }
         });
 
@@ -403,8 +404,9 @@ impl Mapper{
 
         // Keep the virtual touch near the center. This remains bounded by the
         // Android touch protocol; relative mode above is the true unbounded path.
-        if self.mx<0.12||self.mx>0.88{self.mx=a.center_x;}
-        if self.my<0.12||self.my>0.88{self.my=a.center_y;}
+        let margin=a.edge_margin;
+        if self.mx<margin||self.mx>1.0-margin{self.mx=a.center_x;}
+        if self.my<margin||self.my>1.0-margin{self.my=a.center_y;}
         self.mv(a.slot,self.mx,self.my);
     }
 
@@ -448,7 +450,7 @@ mod tests{
             joystick:None,
             aim:Some(Aim{
                 button:"MOUSE_RIGHT".into(),center_x:0.5,center_y:0.5,
-                sensitivity:0.5,slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
+                sensitivity:0.5,slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,edge_margin:0.12,mode:"relative".into(),
             }),
             taps:vec![],holds:vec![],mouse_taps:vec![],mouse_holds:vec![],
             performance:Performance::default(),touch:crate::config::TouchSettings::default(),
