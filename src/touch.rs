@@ -352,6 +352,7 @@ impl Mapper {
         }
 
         let perf = &cfg.performance;
+        let touch_cfg = (cfg.touch.pressure, cfg.touch.major, cfg.touch.minor);
 
         Ok(Self {
             touch: Pipe::new(
@@ -380,7 +381,7 @@ impl Mapper {
             mouse_actions: mouse_actions.into_boxed_slice(),
             joystick,
             aim_cfg,
-            touch_cfg: (perf.touch_pressure(), perf.touch_major(), perf.touch_minor()),
+            touch_cfg,
             mouse_hold_slots,
         })
     }
@@ -729,20 +730,6 @@ impl Mapper {
     pub fn reset_mouse_state(&mut self) {
         self.release_mouse_inputs();
     }
-}
-
-// Small helpers keep performance settings readable without leaking UI concerns
-// into the input backend.
-trait PerformanceTouch {
-    fn touch_pressure(&self) -> i32;
-    fn touch_major(&self) -> i32;
-    fn touch_minor(&self) -> i32;
-}
-
-impl PerformanceTouch for crate::config::Performance {
-    fn touch_pressure(&self) -> i32 { 80 }
-    fn touch_major(&self) -> i32 { 8 }
-    fn touch_minor(&self) -> i32 { 8 }
 }
 
 #[cfg(test)]
