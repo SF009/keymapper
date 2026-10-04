@@ -271,11 +271,6 @@ fn set_status(ui:&Ui,msg:&str){
     ui.status.set_text(msg);
 }
 
-fn mark_dirty(ui:&Ui,msg:&str){
-    ui.state.borrow_mut().dirty=true;
-    set_status(ui,msg);
-    ui.canvas.queue_draw();
-}
 
 fn selected_position(cfg:&Config,sel:BindingRef)->Option<(f32,f32)>{
     match sel{
@@ -560,20 +555,6 @@ fn delete_binding(ui:&Ui,sel:BindingRef){
 
 #[derive(Clone,Copy)]
 enum EditType{KeyboardTap,KeyboardHold,MouseTap,MouseHold}
-
-#[allow(dead_code)]
-fn add_binding_buttons(parent:&GtkBox,ui:&Ui){
-    let bar=GtkBox::new(Orientation::Horizontal,6);
-    for(title,kind) in [
-        ("+ Key TAP",EditType::KeyboardTap),("+ Key HOLD",EditType::KeyboardHold),
-        ("+ Mouse TAP",EditType::MouseTap),("+ Mouse HOLD",EditType::MouseHold),
-    ]{
-        let b=Button::with_label(title);
-        let ui2=ui.clone();b.connect_clicked(move |_|open_add_dialog(&ui2,kind));
-        bar.append(&b);
-    }
-    parent.append(&bar);
-}
 
 fn key_alias(name:&str)->String{
     let n=name.to_ascii_uppercase();
@@ -1220,8 +1201,7 @@ fn build_ui(app:&Application){
     addbar.append(&add_mouse_tap);addbar.append(&add_mouse_hold);
     left.append(&addbar);
     let bindings_scroll=ScrolledWindow::new();bindings_scroll.set_policy(PolicyType::Never,PolicyType::Automatic);
-    bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(false);
-    addbar.append(&Button::with_label("Bindings below"));
+    bindings_scroll.set_child(Some(&bindings_box));bindings_scroll.set_vexpand(true);bindings_scroll.set_min_content_height(240);
     left.append(&bindings_scroll);
 
     let center=GtkBox::new(Orientation::Vertical,0);center.append(&canvas);center.append(&status);
