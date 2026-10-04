@@ -544,8 +544,8 @@ impl Mapper {
     fn joy(&mut self) {
         let Some(j) = self.joystick else { return };
 
-        let mut dx = 0.0;
-        let mut dy = 0.0;
+        let mut dx: f32 = 0.0;
+        let mut dy: f32 = 0.0;
 
         if self.pressed(j.left) {
             dx -= 1.0;
