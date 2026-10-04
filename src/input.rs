@@ -225,18 +225,13 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
 
                 if ok{
                     if desired{
-                        // Drop packets that were already queued while the
-                        // desktop still owned the device. This prevents the
-                        // first locked movement from becoming a huge jump.
+                        // Discard packets queued before the exclusive grab. They
+                        // belong to the unlocked desktop stream and must not
+                        // become the first in-game movement after locking.
                         flush_pending_mouse_events(&mut d);
                     }
                     locked=desired;
                     if let Ok(mut m)=mapper.lock(){m.set_mouse_lock(locked);}
-                    if !desired{
-                        // The compositor can receive a fresh stream after
-                        // EVIOCGRAB is released; don't retain stale packets here.
-                        flush_pending_mouse_events(&mut d);
-                    }
                 }else if desired{
                     // Never report locked while the kernel grab actually failed.
                     control.mouse_locked.store(false,Ordering::Release);
