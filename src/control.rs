@@ -63,9 +63,10 @@ fn handle(mut stream:UnixStream,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeC
         "status"=>{
             let (locked,grab)=mapper.lock().map(|m|(m.is_mouse_locked(),m.config().performance.grab)).unwrap_or((false,false));
             let requested=control.mouse_locked.load(Ordering::Acquire);
-            format!("OK running=1 locked={} requested={} grab={} socket={}",
+            format!("OK running=1 locked={} requested={} owner={} grab={} socket={}",
                 if locked{1}else{0},
                 if requested{1}else{0},
+                control.owner_name(),
                 if grab{1}else{0},
                 socket_path().display())
         }
