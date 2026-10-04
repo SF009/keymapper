@@ -1634,6 +1634,8 @@ fn apply_preset(ui: &Ui, preset: Preset) {
     new_cfg.display = st.cfg.display.clone();
     new_cfg.devices = st.cfg.devices.clone();
     new_cfg.performance = st.cfg.performance.clone();
+    new_cfg.performance.mouse_lock = false;
+    new_cfg.performance.auto_lock_on_aim = true;
     drop(st);
 
     {
@@ -2611,13 +2613,29 @@ fn build_ui(app: &Application) {
     }
 
     {
+        let armed = Rc::new(Cell::new(false));
+        let armed_button = armed.clone();
         let ui = ui.clone();
+        capture_toggle.connect_clicked(move |_| {
+            armed_button.set(true);
+            ui.mouse_toggle.grab_focus();
+            ui.status.set_text("Press the desired lock key…");
+        });
+
         let controller = EventControllerKey::new();
+        let armed_key = armed.clone();
+        let entry = mouse_toggle.clone();
+        let ui = ui.clone();
         controller.connect_key_pressed(move |_, key, _, _| {
+            if !armed_key.get() {
+                return glib::Propagation::Proceed;
+            }
             if let Some(name) = key.name() {
                 let n = name.to_string();
-                if !n.is_empty() && ui.mouse_toggle.has_focus() {
-                    ui.mouse_toggle.set_text(&key_alias(&n));
+                if !n.is_empty() {
+                    entry.set_text(&key_alias(&n));
+                    armed_key.set(false);
+                    ui.status.set_text("Lock key captured ✓");
                     return glib::Propagation::Stop;
                 }
             }
