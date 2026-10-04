@@ -344,13 +344,23 @@ fn mouse_loop(path:&str,mapper:&Arc<Mutex<Mapper>>,control:&Arc<RuntimeControl>)
                                 // Aim ownership is acquired from the actual
                                 // Aim button press, rather than requiring F8
                                 // to be pressed first.
+                                let mut process_button=true;
                                 if Some(code)==aim_button&&v==1&&auto_lock_on_aim{
                                     if control.request_aim_lock(grab){
                                         locked=apply_mouse_lock(&mut d,true,grab,false,mapper,control);
+                                        if !locked{
+                                            // Never start the Aim state when the
+                                            // kernel grab failed; this prevents a
+                                            // relative-aim state from becoming
+                                            // permanently stuck without motion.
+                                            process_button=false;
+                                        }
                                     }
                                 }
 
-                                if let Ok(mut m)=mapper.lock(){m.button(code,v);}
+                                if process_button{
+                                    if let Ok(mut m)=mapper.lock(){m.button(code,v);}
+                                }
 
                                 // Release the touch/firing state BEFORE releasing
                                 // an Aim-owned kernel grab, matching Helper's
