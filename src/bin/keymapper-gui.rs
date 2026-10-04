@@ -59,6 +59,7 @@ struct Ui {
     aim_invert_y:CheckButton,
     aim_scale_x:SpinButton,
     aim_scale_y:SpinButton,
+    aim_edge_margin:SpinButton,
     joy_enabled:CheckButton,
     joy_up:Entry,
     joy_down:Entry,
@@ -106,7 +107,7 @@ fn shooter_profile(base:&Config)->Config{
     });
     cfg.aim=Some(Aim{
         button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,
-        sensitivity:2.0,slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
+        sensitivity:2.0,slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,edge_margin:0.12,mode:"relative".into(),
     });
     cfg
 }
@@ -214,7 +215,7 @@ fn default_config()->Config{
         }),
         aim:Some(Aim{
             button:"MOUSE_RIGHT".into(),center_x:0.50,center_y:0.50,sensitivity:2.,
-            slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,mode:"relative".into(),
+            slot:1,invert_x:false,invert_y:false,scale_x:1.,scale_y:1.,edge_margin:0.12,mode:"relative".into(),
         }),
         taps:vec![
             Tap{key:"SPACE".into(),x:0.86,y:0.86,slot:2},
@@ -720,7 +721,7 @@ fn sync_form(ui:&Ui){
         ui.aim_x.set_value(a.center_x as f64);ui.aim_y.set_value(a.center_y as f64);
         ui.aim_sensitivity.set_value(a.sensitivity as f64);ui.aim_slot.set_value(a.slot as f64);
         ui.aim_invert_x.set_active(a.invert_x);ui.aim_invert_y.set_active(a.invert_y);
-        ui.aim_scale_x.set_value(a.scale_x as f64);ui.aim_scale_y.set_value(a.scale_y as f64);
+        ui.aim_scale_x.set_value(a.scale_x as f64);ui.aim_scale_y.set_value(a.scale_y as f64);ui.aim_edge_margin.set_value(a.edge_margin as f64);
     }
     ui.joy_enabled.set_active(st.cfg.joystick.is_some());
     if let Some(j)=&st.cfg.joystick{
@@ -764,7 +765,7 @@ fn sync_state_from_form(ui:&Ui){
             center_x:ui.aim_x.value() as f32,center_y:ui.aim_y.value() as f32,
             sensitivity:ui.aim_sensitivity.value() as f32,slot:ui.aim_slot.value() as u8,
             invert_x:ui.aim_invert_x.is_active(),invert_y:ui.aim_invert_y.is_active(),
-            scale_x:ui.aim_scale_x.value() as f32,scale_y:ui.aim_scale_y.value() as f32,
+            scale_x:ui.aim_scale_x.value() as f32,scale_y:ui.aim_scale_y.value() as f32,edge_margin:ui.aim_edge_margin.value() as f32,
             mode:ui.aim_mode.active_id().map(|x|x.to_string()).unwrap_or_else(||"touch".into()),
         });
     }else{st.cfg.aim=None;}
@@ -1330,7 +1331,7 @@ fn build_ui(app:&Application){
     let aim_mode=ComboBoxText::new();aim_mode.append(Some("touch"),"Touch / absolute");aim_mode.append(Some("relative"),"Relative / FPS");let aim_x=make_spin(0.,1.,0.01,3);let aim_y=make_spin(0.,1.,0.01,3);
     let aim_sensitivity=make_spin(0.01,20.,0.05,2);let aim_slot=make_spin(0.,15.,1.,0);
     let aim_invert_x=CheckButton::with_label("Invert X");let aim_invert_y=CheckButton::with_label("Invert Y");
-    let aim_scale_x=make_spin(0.01,20.,0.05,2);let aim_scale_y=make_spin(0.01,20.,0.05,2);
+    let aim_scale_x=make_spin(0.01,20.,0.05,2);let aim_scale_y=make_spin(0.01,20.,0.05,2);let aim_edge_margin=make_spin(0.,0.49,0.01,2);
     let joy_enabled=CheckButton::with_label("Enable joystick");
     let joy_up=Entry::new();let joy_down=Entry::new();let joy_left=Entry::new();let joy_right=Entry::new();
     let joy_x=make_spin(0.,1.,0.01,3);let joy_y=make_spin(0.,1.,0.01,3);let joy_radius=make_spin(0.01,1.,0.005,3);let joy_slot=make_spin(0.,15.,1.,0);let joy_normalize=CheckButton::with_label("Normalize diagonals");
@@ -1348,7 +1349,7 @@ fn build_ui(app:&Application){
     input_access.set_wrap(true);
 
     let bindings_box=GtkBox::new(Orientation::Vertical,6);
-    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_x:aim_invert_x.clone(),aim_invert_y:aim_invert_y.clone(),aim_scale_x:aim_scale_x.clone(),aim_scale_y:aim_scale_y.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),joy_normalize:joy_normalize.clone(),grab:grab.clone(),realtime:realtime.clone(),realtime_priority:realtime_priority.clone(),fifo_write_retries:fifo_write_retries.clone(),fifo_write_wait:fifo_write_wait.clone(),fifo_reconnect:fifo_reconnect.clone(),touch_pressure:touch_pressure.clone(),touch_major:touch_major.clone(),touch_minor:touch_minor.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
+    let ui=Ui{state:state.clone(),profile_list:profile_list.clone(),bindings_box:bindings_box.clone(),canvas:canvas.clone(),status:status.clone(),profile_name:profile_name.clone(),width:width.clone(),height:height.clone(),keyboard:keyboard.clone(),mouse:mouse.clone(),aim_enabled:aim_enabled.clone(),aim_button:aim_button.clone(),aim_mode:aim_mode.clone(),aim_x:aim_x.clone(),aim_y:aim_y.clone(),aim_sensitivity:aim_sensitivity.clone(),aim_slot:aim_slot.clone(),aim_invert_x:aim_invert_x.clone(),aim_invert_y:aim_invert_y.clone(),aim_scale_x:aim_scale_x.clone(),aim_scale_y:aim_scale_y.clone(),aim_edge_margin:aim_edge_margin.clone(),joy_enabled:joy_enabled.clone(),joy_up:joy_up.clone(),joy_down:joy_down.clone(),joy_left:joy_left.clone(),joy_right:joy_right.clone(),joy_x:joy_x.clone(),joy_y:joy_y.clone(),joy_radius:joy_radius.clone(),joy_slot:joy_slot.clone(),joy_normalize:joy_normalize.clone(),grab:grab.clone(),realtime:realtime.clone(),realtime_priority:realtime_priority.clone(),fifo_write_retries:fifo_write_retries.clone(),fifo_write_wait:fifo_write_wait.clone(),fifo_reconnect:fifo_reconnect.clone(),touch_pressure:touch_pressure.clone(),touch_major:touch_major.clone(),touch_minor:touch_minor.clone(), mouse_lock:mouse_lock.clone(),mouse_toggle:mouse_toggle.clone(),runtime_status:runtime_status.clone(),lock_status:lock_status.clone(),input_access:input_access.clone()};
 
     let root=GtkBox::new(Orientation::Vertical,0);
     let header=GtkBox::new(Orientation::Horizontal,8);add_margins(&header,8);
@@ -1406,8 +1407,8 @@ fn build_ui(app:&Application){
     aim.append(&aim_enabled);
     let ag=Grid::new();ag.set_row_spacing(7);ag.set_column_spacing(8);
     form_row(&ag,0,"Button",&aim_button);form_row(&ag,1,"Mode",&aim_mode);form_row(&ag,2,"Center X",&aim_x);form_row(&ag,3,"Center Y",&aim_y);
-    form_row(&ag,4,"Sensitivity",&aim_sensitivity);form_row(&ag,5,"Slot",&aim_slot);form_row(&ag,6,"X scale",&aim_scale_x);form_row(&ag,7,"Y scale",&aim_scale_y);
-    ag.attach(&aim_invert_x,1,8,1,1);ag.attach(&aim_invert_y,1,9,1,1);aim.append(&ag);
+    form_row(&ag,4,"Sensitivity",&aim_sensitivity);form_row(&ag,5,"Slot",&aim_slot);form_row(&ag,6,"X scale",&aim_scale_x);form_row(&ag,7,"Y scale",&aim_scale_y);form_row(&ag,8,"Edge margin",&aim_edge_margin);
+    ag.attach(&aim_invert_x,1,9,1,1);ag.attach(&aim_invert_y,1,10,1,1);aim.append(&ag);
 
     let joystick=add_section(&right,"Joystick");
     joystick.append(&joy_enabled);
