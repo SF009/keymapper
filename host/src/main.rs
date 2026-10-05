@@ -114,12 +114,12 @@ fn keyboard(path: String, locked: Arc<AtomicBool>, grab: bool, port: u16) {
         };
         for ev in events {
             if let EventSummary::Key(_, code, value) = ev.destructure() {
-                let down = value != 0;
-                if code.0 == KEY_F8 && down {
+                let state = match value { 1 => 1u8, 0 => 0u8, _ => 2u8 };
+                if code.0 == KEY_F8 && state == 1 {
                     locked.fetch_xor(true, Ordering::AcqRel);
                     continue;
                 }
-                let payload = [(code.0 >> 8) as u8, code.0 as u8, if down { 1 } else { 0 }];
+                let payload = [(code.0 >> 8) as u8, code.0 as u8, state];
                 if send_frame(&mut s, 2, &payload).is_err() {
                     s = connect(port);
                     let _ = send_frame(&mut s, 1, b"keyboard");
@@ -170,7 +170,8 @@ fn mouse(path: String, locked: Arc<AtomicBool>, grab: bool, port: u16) {
                     }
                 }
                 EventSummary::Key(_, code, value) if code.0 >= evdev::KeyCode::BTN_LEFT.0 => {
-                    let payload = [(code.0 >> 8) as u8, code.0 as u8, if value != 0 { 1 } else { 0 }];
+                    let state = match value { 1 => 1u8, 0 => 0u8, _ => 2u8 };
+                    let payload = [(code.0 >> 8) as u8, code.0 as u8, state];
                     let _ = send_frame(&mut s, 4, &payload);
                 }
                 _ => {}
