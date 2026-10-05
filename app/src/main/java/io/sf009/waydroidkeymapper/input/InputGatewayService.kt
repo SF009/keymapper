@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import io.sf009.waydroidkeymapper.model.Profile
 import io.sf009.waydroidkeymapper.model.ProfileStore
 import java.io.BufferedInputStream
 import java.net.InetAddress
@@ -23,7 +25,9 @@ class InputGatewayService : Service() {
         @Volatile
         private var cachedProfile: Profile? = null
 
-        fun setActiveProfile(profile: Profile) { cachedProfile = profile }
+        fun setActiveProfile(profile: Profile) {
+            cachedProfile = profile
+        }
     }
 
     private val alive = AtomicBoolean(false)
@@ -34,41 +38,61 @@ class InputGatewayService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(1001, notification())
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(
+                1001,
+                notification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(1001, notification())
+        }
+
         val profile = ProfileStore(this).active()
         cachedProfile = profile
         injector = TouchInjector { cachedProfile ?: profile }
+
         alive.set(true)
         server = ServerSocket(PORT, 8, InetAddress.getByName("127.0.0.1"))
+
         pool.execute {
             while (alive.get()) {
-                val s = runCatching { server?.accept() }.getOrNull() ?: break
-                pool.execute { serve(s) }
+                val socket = runCatching { server?.accept() }.getOrNull() ?: break
+                socket?.let { pool.execute { serve(it) } }
             }
         }
     }
 
     private fun serve(socket: Socket) {
-        socket.use {
-            it.tcpNoDelay = true
-            val input = BufferedInputStream(it.getInputStream(), 4096)
+        socket.use { s ->
+            s.tcpNoDelay = true
+            s.keepAlive = true
+            val input = BufferedInputStream(s.getInputStream(), 4096)
+
             while (alive.get()) {
-                val f = Protocol.read(input) ?: break
-                when (f.type) {
-                    Protocol.KEY -> if (f.payload.size >= 3) {
-                        val code = ((f.payload[0].toInt() and 255) shl 8) or (f.payload[1].toInt() and 255)
-                        injector.key(code, f.payload[2].toInt() != 0)
+                val frame = Protocol.read(input) ?: break
+                when (frame.type) {
+                    Protocol.HELLO,
+                    Protocol.PING -> Unit
+
+                    Protocol.KEY -> if (frame.payload.size >= 3) {
+                        val code = ((frame.payload[0].toInt() and 255) shl 8) or
+                            (frame.payload[1].toInt() and 255)
+                        injector.key(code, frame.payload[2].toInt() and 255)
                     }
-                    Protocol.MOUSE_MOVE -> if (f.payload.size >= 4) {
-                        val dx = ((f.payload[0].toInt() shl 8) or (f.payload[1].toInt() and 255)).toShort().toInt()
-                        val dy = ((f.payload[2].toInt() shl 8) or (f.payload[3].toInt() and 255)).toShort().toInt()
+
+                    Protocol.MOUSE_MOVE -> if (frame.payload.size >= 4) {
+                        val dx = java.nio.ByteBuffer.wrap(frame.payload, 0, 2).short.toInt()
+                        val dy = java.nio.ByteBuffer.wrap(frame.payload, 2, 2).short.toInt()
                         injector.mouseMove(dx, dy)
                     }
-                    Protocol.MOUSE_BUTTON -> if (f.payload.size >= 3) {
-                        val code = ((f.payload[0].toInt() and 255) shl 8) or (f.payload[1].toInt() and 255)
-                        injector.mouseButton(code, f.payload[2].toInt() != 0)
+
+                    Protocol.MOUSE_BUTTON -> if (frame.payload.size >= 3) {
+                        val code = ((frame.payload[0].toInt() and 255) shl 8) or
+                            (frame.payload[1].toInt() and 255)
+                        injector.mouseButton(code, frame.payload[2].toInt() and 255)
                     }
-                    else -> Unit
                 }
             }
         }
@@ -77,7 +101,7 @@ class InputGatewayService : Service() {
     override fun onDestroy() {
         alive.set(false)
         runCatching { server?.close() }
-        injector.stopAll()
+        if (::injector.isInitialized) injector.stopAll()
         pool.shutdownNow()
         cachedProfile = null
         super.onDestroy()
@@ -88,7 +112,11 @@ class InputGatewayService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "Waydroid Keymapper", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(
+                    CHANNEL,
+                    "Waydroid Keymapper",
+                    NotificationManager.IMPORTANCE_LOW
+                )
             )
         }
     }
@@ -97,13 +125,13 @@ class InputGatewayService : Service() {
         if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, CHANNEL)
                 .setContentTitle("Waydroid Keymapper")
-                .setContentText("Input gateway :27183")
+                .setContentText("Input gateway :$PORT")
                 .setSmallIcon(android.R.drawable.ic_menu_manage)
                 .build()
         } else {
             Notification.Builder(this)
                 .setContentTitle("Waydroid Keymapper")
-                .setContentText("Input gateway :27183")
+                .setContentText("Input gateway :$PORT")
                 .setSmallIcon(android.R.drawable.ic_menu_manage)
                 .build()
         }
