@@ -15,6 +15,7 @@ class LayoutEditorView(context: Context) : View(context) {
         set(value) { field = value; invalidate() }
 
     private var selected: Binding? = null
+    private var selectedSpecial: Int = 0 // 1=joystick, 2=aim
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     override fun onDraw(c: Canvas) {
