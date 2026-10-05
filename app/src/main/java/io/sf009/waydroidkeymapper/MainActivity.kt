@@ -49,7 +49,7 @@ class MainActivity : Activity() {
         root.addView(spinner, LinearLayout.LayoutParams(-1, 60))
 
         val buttons = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        buttons.addView(button("Save") { store.save(current); setStatus("Saved ${current.name}") })
+        buttons.addView(button("Save") { saveCurrent() })
         buttons.addView(button("New") { createProfile() })
         buttons.addView(button("Delete") { deleteCurrent() })
         buttons.addView(button("Layout") { buildEditor() })
@@ -102,7 +102,7 @@ class MainActivity : Activity() {
         }
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         top.addView(button("Back") { buildMain() })
-        top.addView(button("Save") { store.save(current); setStatus("Saved") })
+        top.addView(button("Save") { saveCurrent() })
         top.addView(button("Add") { addBindingDialog() })
         root.addView(top)
 
@@ -155,7 +155,7 @@ class MainActivity : Activity() {
             .setView(input)
             .setPositiveButton("Create") { _, _ ->
                 current = Profile(input.text.toString().ifBlank { "New Profile" }, bindings = mutableListOf())
-                store.save(current)
+                saveCurrent()
                 buildMain()
             }
             .setNegativeButton("Cancel", null)
@@ -167,7 +167,7 @@ class MainActivity : Activity() {
         val f = java.io.File(filesDir, "profiles/${safe}.json")
         if (f.exists()) f.delete()
         current = Profile.freeFire()
-        store.save(current)
+        saveCurrent()
         buildMain()
     }
 
@@ -215,6 +215,12 @@ class MainActivity : Activity() {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 42)
+    }
+
+    private fun saveCurrent() {
+        store.save(current)
+        InputGatewayService.setActiveProfile(current)
+        setStatus("Saved " + current.name)
     }
 
     private fun setStatus(s: String) { if (::status.isInitialized) status.text = s }
