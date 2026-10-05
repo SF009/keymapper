@@ -19,6 +19,11 @@ class InputGatewayService : Service() {
     companion object {
         const val PORT = 27183
         private const val CHANNEL = "waydroid-keymapper"
+
+        @Volatile
+        private var cachedProfile: Profile? = null
+
+        fun setActiveProfile(profile: Profile) { cachedProfile = profile }
     }
 
     private val alive = AtomicBoolean(false)
@@ -30,7 +35,9 @@ class InputGatewayService : Service() {
         super.onCreate()
         createChannel()
         startForeground(1001, notification())
-        injector = TouchInjector { ProfileStore(this).active() }
+        val profile = ProfileStore(this).active()
+        cachedProfile = profile
+        injector = TouchInjector { cachedProfile ?: profile }
         alive.set(true)
         server = ServerSocket(PORT, 8, InetAddress.getByName("127.0.0.1"))
         pool.execute {
@@ -72,6 +79,7 @@ class InputGatewayService : Service() {
         runCatching { server?.close() }
         injector.stopAll()
         pool.shutdownNow()
+        cachedProfile = null
         super.onDestroy()
     }
 
