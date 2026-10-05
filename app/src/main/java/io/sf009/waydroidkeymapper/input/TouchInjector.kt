@@ -22,40 +22,45 @@ class TouchInjector(private val profileProvider: () -> Profile) {
     private fun x(v: Float, p: Profile) = (v.coerceIn(0f, 1f) * p.displayWidth).coerceIn(0f, p.displayWidth.toFloat())
     private fun y(v: Float, p: Profile) = (v.coerceIn(0f, 1f) * p.displayHeight).coerceIn(0f, p.displayHeight.toFloat())
 
-    @Synchronized fun key(code: Int, down: Boolean) {
+    @Synchronized fun key(code: Int, state: Int) {
         val p = profileProvider()
         val b = p.bindings.firstOrNull { it.source == "key" && it.code == code } ?: return
         if (b.trigger == Trigger.TAP) {
-            if (down) service()?.tap(x(b.x, p), y(b.y, p))
+            if (state == 1) service()?.tap(x(b.x, p), y(b.y, p))
             return
         }
-        if (down) holds[code] = b else holds.remove(code)
-        refreshHolds(p)
+        when (state) {
+            1 -> holds[code] = b
+            0 -> holds.remove(code)
+        }
+        if (state != 2) refreshHolds(p)
     }
 
-    @Synchronized fun mouseButton(code: Int, down: Boolean) {
+    @Synchronized fun mouseButton(code: Int, state: Int) {
         val p = profileProvider()
         if (p.aimEnabled && code == p.aimButton) {
-            aimActive = down
-            if (down) {
+            aimActive = state != 0
+            if (aimActive) {
                 aimX = x(p.aimX, p)
                 aimY = y(p.aimY, p)
             } else {
                 dxQueued = 0
                 dyQueued = 0
-                service()?.cancelAll()
             }
             return
         }
 
         val b = p.bindings.firstOrNull { it.source == "mouse" && it.code == code } ?: return
         if (b.trigger == Trigger.TAP) {
-            if (down) service()?.tap(x(b.x, p), y(b.y, p))
+            if (state == 1) service()?.tap(x(b.x, p), y(b.y, p))
             return
         }
         val id = 10_000 + code
-        if (down) holds[id] = b else holds.remove(id)
-        refreshHolds(p)
+        when (state) {
+            1 -> holds[id] = b
+            0 -> holds.remove(id)
+        }
+        if (state != 2) refreshHolds(p)
     }
 
     fun mouseMove(dx: Int, dy: Int) {
@@ -94,7 +99,6 @@ class TouchInjector(private val profileProvider: () -> Profile) {
     @Synchronized private fun refreshHolds(p: Profile) {
         val s = service() ?: return
         if (holds.isEmpty()) {
-            s.cancelAll()
             return
         }
         val b = android.accessibilityservice.GestureDescription.Builder()
