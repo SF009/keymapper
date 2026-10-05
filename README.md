@@ -28,6 +28,7 @@ The Android app owns the GUI, profiles, mappings, layout editor, overlay and tou
 - evdev input capture with optional exclusive grab
 - Automatic reconnect after a dropped socket
 - Android Accessibility gesture backend
+- Android 14+ long-running gateway declared as specialUse foreground service
 - No third-party Android runtime libraries
 
 ## Android setup
@@ -82,9 +83,15 @@ The APK is produced under:
 
     app/build/outputs/apk/debug/app-debug.apk
 
-A helper script is also provided:
+A unified helper script is also provided:
 
-    ./scripts/build.sh
+    bash scripts/build.sh
+
+APK install helper:
+
+    bash scripts/install-apk.sh
+
+GitHub Actions builds both the Android debug APK and Linux release helper on pushes and pull requests.
 
 ## Latency
 
