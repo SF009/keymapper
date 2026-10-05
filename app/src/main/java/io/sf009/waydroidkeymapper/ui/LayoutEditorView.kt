@@ -9,47 +9,65 @@ import android.view.View
 import io.sf009.waydroidkeymapper.model.Binding
 import io.sf009.waydroidkeymapper.model.Profile
 import kotlin.math.hypot
+import kotlin.math.min
 
 class LayoutEditorView(context: Context) : View(context) {
     var profile: Profile? = null
-        set(value) { field = value; invalidate() }
+        set(value) {
+            field = value
+            selected = null
+            selectedKind = 0
+            invalidate()
+        }
 
     private var selected: Binding? = null
-    private var selectedSpecial: Int = 0 // 1=joystick, 2=aim
+    private var selectedKind: Int = 0 // 0=binding, 1=joystick, 2=aim
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     override fun onDraw(c: Canvas) {
         val p = profile ?: return
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
         paint.style = Paint.Style.FILL
-        paint.color = Color.rgb(16, 18, 23)
-        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        paint.color = Color.rgb(14, 16, 21)
+        c.drawRect(0f, 0f, w, h, paint)
 
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 1f
-        paint.color = Color.rgb(42, 45, 55)
+        paint.color = Color.rgb(40, 44, 52)
         for (i in 1 until 10) {
-            val x = width * i / 10f
-            val y = height * i / 10f
-            c.drawLine(x, 0f, x, height.toFloat(), paint)
-            c.drawLine(0f, y, width.toFloat(), y, paint)
+            c.drawLine(w * i / 10f, 0f, w * i / 10f, h, paint)
+            c.drawLine(0f, h * i / 10f, w, h * i / 10f, paint)
         }
 
         if (p.joystickEnabled) {
-            paint.color = Color.argb(160, 80, 230, 130)
-            c.drawCircle(p.joystickX * width, p.joystickY * height, minOf(width, height) * p.joystickRadius, paint)
-        }
-        if (p.aimEnabled) {
-            paint.color = Color.argb(220, 255, 70, 80)
-            c.drawCircle(p.aimX * width, p.aimY * height, 24f, paint)
+            paint.color = Color.argb(170, 80, 230, 130)
+            c.drawCircle(
+                p.joystickX * w,
+                p.joystickY * h,
+                min(w, h) * p.joystickRadius,
+                paint
+            )
+            paint.color = Color.argb(80, 80, 230, 130)
+            c.drawCircle(p.joystickX * w, p.joystickY * h, 7f, paint)
         }
 
-        paint.style = Paint.Style.FILL
-        paint.textSize = 18f
+        if (p.aimEnabled) {
+            paint.color = Color.argb(220, 255, 70, 80)
+            c.drawCircle(p.aimX * w, p.aimY * h, 25f, paint)
+            c.drawLine(p.aimX * w - 18f, p.aimY * h, p.aimX * w + 18f, p.aimY * h, paint)
+            c.drawLine(p.aimX * w, p.aimY * h - 18f, p.aimX * w, p.aimY * h + 18f, paint)
+        }
+
         p.bindings.forEach {
-            paint.color = if (it == selected) Color.rgb(255, 80, 90) else Color.rgb(70, 110, 160)
-            c.drawCircle(it.x * width, it.y * height, 22f, paint)
+            paint.style = Paint.Style.FILL
+            paint.color = if (it == selected) Color.rgb(255, 80, 95) else Color.rgb(64, 106, 160)
+            c.drawCircle(it.x * w, it.y * h, 22f, paint)
             paint.color = Color.WHITE
-            c.drawText(it.label, it.x * width + 28f, it.y * height + 6f, paint)
+            paint.textSize = 17f
+            c.drawText(it.label, it.x * w + 28f, it.y * h + 6f, paint)
         }
     }
 
@@ -57,24 +75,67 @@ class LayoutEditorView(context: Context) : View(context) {
         val p = profile ?: return false
         val nx = (e.x / width.toFloat()).coerceIn(0f, 1f)
         val ny = (e.y / height.toFloat()).coerceIn(0f, 1f)
+
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { selected = nearest(p, nx, ny); return true }
-            MotionEvent.ACTION_MOVE -> {
-                selected?.let { it.x = nx; it.y = ny; invalidate() }
+            MotionEvent.ACTION_DOWN -> {
+                val hit = nearest(p, nx, ny)
+                selected = hit.first
+                selectedKind = hit.second
+                invalidate()
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { selected = null; return true }
+
+            MotionEvent.ACTION_MOVE -> {
+                when (selectedKind) {
+                    0 -> selected?.let {
+                        it.x = nx
+                        it.y = ny
+                    }
+                    1 -> {
+                        p.joystickX = nx
+                        p.joystickY = ny
+                    }
+                    2 -> {
+                        p.aimX = nx
+                        p.aimY = ny
+                    }
+                }
+                invalidate()
+                return true
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                selected = null
+                selectedKind = 0
+                invalidate()
+                return true
+            }
         }
         return true
     }
 
-    private fun nearest(p: Profile, x: Float, y: Float): Binding? {
-        var best: Binding? = null
-        var d = 0.05
+    private fun nearest(p: Profile, x: Float, y: Float): Pair<Binding?, Int> {
+        var bestBinding: Binding? = null
+        var best = 0.045
+
         p.bindings.forEach {
-            val n = hypot((it.x - x).toDouble(), (it.y - y).toDouble())
-            if (n < d) { d = n; best = it }
+            val d = hypot((it.x - x).toDouble(), (it.y - y).toDouble())
+            if (d < best) {
+                best = d
+                bestBinding = it
+            }
         }
-        return best
+
+        if (p.joystickEnabled) {
+            val d = hypot((p.joystickX - x).toDouble(), (p.joystickY - y).toDouble())
+            if (d < best + p.joystickRadius) return null to 1
+        }
+
+        if (p.aimEnabled) {
+            val d = hypot((p.aimX - x).toDouble(), (p.aimY - y).toDouble())
+            if (d < maxOf(best, 0.04)) return null to 2
+        }
+
+        return bestBinding to 0
     }
 }
