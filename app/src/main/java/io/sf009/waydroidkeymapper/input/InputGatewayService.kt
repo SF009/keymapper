@@ -12,6 +12,7 @@ import io.sf009.waydroidkeymapper.model.Profile
 import io.sf009.waydroidkeymapper.model.ProfileStore
 import java.io.BufferedInputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -39,7 +40,7 @@ class InputGatewayService : Service() {
         super.onCreate()
         createChannel()
 
-        if (Build.VERSION.SDK_INT >= 29) {
+        if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
                 1001,
                 notification(),
@@ -54,12 +55,15 @@ class InputGatewayService : Service() {
         injector = TouchInjector { cachedProfile ?: profile }
 
         alive.set(true)
-        server = ServerSocket(PORT, 8, InetAddress.getByName("127.0.0.1"))
+        server = ServerSocket().apply {
+            reuseAddress = true
+            bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT), 8)
+        }
 
         pool.execute {
             while (alive.get()) {
                 val socket = runCatching { server?.accept() }.getOrNull() ?: break
-                socket?.let { pool.execute { serve(it) } }
+                pool.execute { serve(socket) }
             }
         }
     }
@@ -68,6 +72,7 @@ class InputGatewayService : Service() {
         socket.use { s ->
             s.tcpNoDelay = true
             s.keepAlive = true
+            s.receiveBufferSize = 4096
             val input = BufferedInputStream(s.getInputStream(), 4096)
 
             while (alive.get()) {
