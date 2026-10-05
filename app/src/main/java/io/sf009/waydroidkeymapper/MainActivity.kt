@@ -69,7 +69,7 @@ class MainActivity : Activity() {
         })
         root.addView(button("Show Layout Overlay") {
             if (Settings.canDrawOverlays(this)) {
-                startServiceCompat(Intent(this, OverlayService::class.java))
+                startService(Intent(this, OverlayService::class.java))
                 setStatus("Overlay shown")
             } else setStatus("Grant overlay permission first")
         })
