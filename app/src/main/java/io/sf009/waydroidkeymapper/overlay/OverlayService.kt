@@ -2,77 +2,124 @@ package io.sf009.waydroidkeymapper.overlay
 
 import android.app.Service
 import android.content.Context
+import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import io.sf009.waydroidkeymapper.model.Profile
 import io.sf009.waydroidkeymapper.model.ProfileStore
 
 class OverlayService : Service() {
-    private var view: View? = null
+    private var view: OverlayView? = null
     private var wm: WindowManager? = null
+    private val main = Handler(Looper.getMainLooper())
+    private val refresh = object : Runnable {
+        override fun run() {
+            view?.reload()
+            if (view != null) main.postDelayed(this, 250L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         if (!Settings.canDrawOverlays(this)) return
+
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+
         val lp = WindowManager.LayoutParams(
-            -1, -1,
+            -1,
+            -1,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             android.graphics.PixelFormat.TRANSLUCENT
-        )
-        lp.gravity = Gravity.TOP or Gravity.START
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            title = "Waydroid Keymapper Overlay"
+        }
+
         view = OverlayView(this)
         wm?.addView(view, lp)
+        main.post(refresh)
     }
 
     override fun onDestroy() {
+        main.removeCallbacks(refresh)
         runCatching { view?.let { wm?.removeView(it) } }
         view = null
         super.onDestroy()
     }
 
-    override fun onBind(intent: android.content.Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder? = null
 
     private class OverlayView(ctx: Context) : View(ctx) {
+        private val store = ProfileStore(ctx)
+        private var profile: Profile = store.active()
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val profile = ProfileStore(ctx).active()
+
+        fun reload() {
+            profile = store.active()
+            invalidate()
+        }
 
         override fun onDraw(c: Canvas) {
+            super.onDraw(c)
+
             val w = width.toFloat()
             val h = height.toFloat()
-            fun pxX(v: Float) = v * w
-            fun pxY(v: Float) = v * h
+            if (w <= 0f || h <= 0f) return
 
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2f
+            fun pxX(v: Float) = v.coerceIn(0f, 1f) * w
+            fun pxY(v: Float) = v.coerceIn(0f, 1f) * h
+
             if (profile.joystickEnabled) {
-                p.color = Color.argb(120, 80, 240, 140)
-                c.drawCircle(pxX(profile.joystickX), pxY(profile.joystickY), minOf(w, h) * profile.joystickRadius, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3f
+                p.color = Color.argb(150, 80, 240, 140)
+                c.drawCircle(
+                    pxX(profile.joystickX),
+                    pxY(profile.joystickY),
+                    minOf(w, h) * profile.joystickRadius,
+                    p
+                )
+                p.style = Paint.Style.FILL
+                p.color = Color.argb(90, 80, 240, 140)
+                c.drawCircle(pxX(profile.joystickX), pxY(profile.joystickY), 8f, p)
             }
+
             if (profile.aimEnabled) {
-                p.color = Color.argb(140, 255, 70, 80)
-                c.drawCircle(pxX(profile.aimX), pxY(profile.aimY), 24f, p)
-                c.drawLine(pxX(profile.aimX) - 16, pxY(profile.aimY), pxX(profile.aimX) + 16, pxY(profile.aimY), p)
-                c.drawLine(pxX(profile.aimX), pxY(profile.aimY) - 16, pxX(profile.aimX), pxY(profile.aimY) + 16, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3f
+                p.color = Color.argb(185, 255, 65, 85)
+                val ax = pxX(profile.aimX)
+                val ay = pxY(profile.aimY)
+                c.drawCircle(ax, ay, 26f, p)
+                c.drawLine(ax - 19f, ay, ax + 19f, ay, p)
+                c.drawLine(ax, ay - 19f, ax, ay + 19f, p)
             }
+
             p.typeface = Typeface.DEFAULT_BOLD
-            p.textSize = 18f
+            p.textSize = 17f
             p.style = Paint.Style.FILL
+
             profile.bindings.forEach {
-                p.color = Color.argb(85, 255, 255, 255)
-                c.drawCircle(pxX(it.x), pxY(it.y), 18f, p)
+                val bx = pxX(it.x)
+                val by = pxY(it.y)
+                p.color = Color.argb(80, 255, 255, 255)
+                c.drawCircle(bx, by, 20f, p)
                 p.color = Color.WHITE
-                c.drawText(it.label, pxX(it.x) + 22f, pxY(it.y) + 6f, p)
+                c.drawText(it.label, bx + 26f, by + 6f, p)
             }
         }
     }
